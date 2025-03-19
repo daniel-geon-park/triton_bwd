@@ -15,7 +15,7 @@ def my_triton_kernel(a, stride_a, b, stride_b, c, stride_c):
     ...
 ```
 
-```
+```diff
 def compute_something(a, b):
     c = torch.zeros_like(a)
 -    my_triton_kernel[grid](a, a.stride(0), b, b.stride(0), c, c.stride(0))
