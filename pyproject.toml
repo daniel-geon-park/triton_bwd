@@ -1,0 +1,16 @@
+[build-system]
+requires = ["setuptools", "setuptools-scm"]
+build-backend = "setuptools.build_meta"
+
+# Basic package info
+[project]
+name = "triton_bwd"  # Name of package when installed using pip
+version = "0.0.1"
+description = "Triton Backward"
+requires-python = ">=3.10"
+dependencies = [
+    "torch",
+]
+
+[tool.setuptools.package-dir]
+"" = "src"
