@@ -5,7 +5,7 @@ from hip_attn.v1_3.kernels.flash_attention import flash_attention, forward
 from hip_research.utils.seed import seed
 
 
-def main():
+def test():
     seed(42)
     dtype = torch.float16
     q, k, v = (
@@ -57,4 +57,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    test()
