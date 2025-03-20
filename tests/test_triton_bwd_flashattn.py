@@ -1,8 +1,8 @@
 import torch
-
-from hip_attn.utils.triton_bwd.triton_bwd_verify import print_errors
 from hip_attn.v1_3.kernels.flash_attention import flash_attention, forward
 from hip_research.utils.seed import seed
+
+from triton_bwd.triton_bwd_verify import print_errors
 
 
 def test():

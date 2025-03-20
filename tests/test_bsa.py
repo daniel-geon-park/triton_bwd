@@ -1,7 +1,8 @@
 import torch
-from hip_attn.utils.triton_bwd.triton_bwd_verify import print_errors
 from hip_attn.v1_3.kernels.block_sparse_attention import block_sparse_attention, forward
 from hip_research.utils.seed import seed
+
+from triton_bwd.triton_bwd_verify import print_errors
 
 
 def test(do_backward=False):
