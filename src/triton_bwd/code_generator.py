@@ -1,6 +1,7 @@
 import ast
 import inspect
 import re
+from contextlib import contextmanager
 from typing import Any
 
 import einx
@@ -10,6 +11,8 @@ from triton import JITFunction
 from triton.language import block_type, pointer_type
 
 from triton_bwd.constexpr import Constexpr
+
+RETURN_VAL = "__return_val__"
 
 
 class CodeGenerator(ast.NodeVisitor):
@@ -21,7 +24,6 @@ class CodeGenerator(ast.NodeVisitor):
         self.args = args
         self.device = device
         self.locals = {}
-        self.return_val = None
         self.valid = True
 
     def set_local(self, name, value):
@@ -106,7 +108,7 @@ class CodeGenerator(ast.NodeVisitor):
         self.visit_compound_statement(node.body)
 
     def visit_Return(self, node):
-        self.return_val = self.visit(node.value)
+        self.set_local(RETURN_VAL, self.visit(node.value))
         return "return"
 
     def visit_AugAssign(self, node):
@@ -136,6 +138,26 @@ class CodeGenerator(ast.NodeVisitor):
             if status == "return":
                 return "return"
         return "continue"
+
+    @contextmanager
+    def cond_block(self, condition, extra_locals=None):
+        if extra_locals is None:
+            extra_locals = {}
+        valid = self.valid & condition
+        block = CodeGenerator(
+            call_stack=self.call_stack,
+            func_globals=self.func_globals,
+            pids=self.pids,
+            args=self.args | self.locals,
+            device=self.device,
+        )
+        block.valid = valid
+        for name, value in extra_locals.items():
+            block.set_local(name, value)
+        yield block
+        for name in block.locals:
+            new_value = block.locals[name]
+            self.dynamic_select(name, new_value, valid)
 
     def visit_For(self, node):
         IteratorClass = self.visit(node.iter.func)
@@ -183,23 +205,10 @@ class CodeGenerator(ast.NodeVisitor):
 
         status = "continue"
         for iteration, valid in iterator:
-            valid = self.valid & valid
-            loop_body = CodeGenerator(
-                call_stack=self.call_stack[:-1]
-                + [self.call_stack[-1] + f":{node.lineno}", "for-loop"],
-                func_globals=self.func_globals,
-                pids=self.pids,
-                args=self.args | self.locals,
-                device=self.device,
-            )
-            loop_body.valid = valid
-            loop_body.set_local(node.target.id, iteration)
-            status = loop_body.visit_compound_statement(node.body)
-            if status == "return":
-                return "return"
-            for name in loop_body.locals:
-                new_value = loop_body.locals[name]
-                self.dynamic_select(name, new_value, valid)
+            with self.cond_block(valid, {node.target.id: iteration}) as block:
+                status = block.visit_compound_statement(node.body)
+                if status == "return":
+                    return "return"
         if status == "continue":
             status = self.visit_compound_statement(node.orelse)
         return status
@@ -209,18 +218,27 @@ class CodeGenerator(ast.NodeVisitor):
 
     def visit_If(self, node):
         test = self.visit(node.test)
-        assert not torch.is_tensor(test)
-        if test:
-            status = self.visit_compound_statement(node.body)
+        if torch.is_tensor(test):
+            with self.cond_block(test) as block:
+                status_true = block.visit_compound_statement(node.body)
+            with self.cond_block(~test) as block:
+                status_false = block.visit_compound_statement(node.orelse)
+            if "return" in (status_true, status_false):
+                raise NotImplementedError("Return not supported in dynamic conditional")
+            return "continue"
         else:
-            status = self.visit_compound_statement(node.orelse)
+            if test:
+                status = self.visit_compound_statement(node.body)
+            else:
+                status = self.visit_compound_statement(node.orelse)
         return status
 
     def visit_Assert(self, node):
-        raise NotImplementedError("Assert not supported")
+        # TODO
+        return "continue"
 
     def visit_Pass(self, node):
-        raise NotImplementedError("Pass not supported")
+        return "continue"
 
     def visit_Break(self, node):
         raise NotImplementedError("Break not supported")
@@ -272,7 +290,7 @@ class CodeGenerator(ast.NodeVisitor):
             )
             gen.valid = self.valid
             gen.visit(tree)
-            return gen.return_val
+            return gen.locals.get(RETURN_VAL, None)
         elif fn is tl.program_id:
             named_args = full_arg_dict(fn, args, kwargs)
             axis = named_args["axis"]
@@ -427,10 +445,23 @@ class CodeGenerator(ast.NodeVisitor):
         return "continue"
 
     def visit_BoolOp(self, node):
-        raise NotImplementedError("BoolOp not supported")
+        assert len(node.values) == 2
+        left = self.visit(node.values[0])
+        right = self.visit(node.values[1])
+        if type(node.op) is ast.And:
+            if not torch.is_tensor(left) and not torch.is_tensor(right):
+                return left and right
+            return left & right
+        if type(node.op) is ast.Or:
+            if not torch.is_tensor(left) and not torch.is_tensor(right):
+                return left or right
+            return left | right
 
     def visit_NamedExpr(self, node):
-        raise NotImplementedError("NamedExpr not supported")
+        target = self.visit(node.target)
+        value = self.visit(node.value)
+        self.set_local(target, value)
+        return value
 
     def visit_BinOp(self, node):
         lhs = self.visit(node.left)
@@ -479,6 +510,7 @@ class CodeGenerator(ast.NodeVisitor):
         raise NotImplementedError("GeneratorExp not supported")
 
     def visit_Compare(self, node):
+        assert len(node.ops) == 1
         lhs = self.visit(node.left)
         rhs = self.visit(node.comparators[0])
         return _apply_binary_method(node.ops[0], lhs, rhs)

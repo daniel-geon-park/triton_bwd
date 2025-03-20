@@ -4,12 +4,11 @@ import torch
 import triton
 import triton.language as tl
 
-from triton_bwd.triton_bwd import triton_bwd
-from triton_bwd.triton_bwd_verify import test_run_bwd, verify_triton_fwd
+from triton_bwd import test_run_bwd, triton_bwd, verify_triton_fwd
 
 
 # Run the following command to execute the test:
-# python -m unittest tests.utils.triton_bwd.test_triton_bwd_basic
+# python -m unittest tests.test_triton_bwd_basic
 class TestTritonBwdBasic(unittest.TestCase):
 
     def test1(self):
