@@ -347,7 +347,14 @@ class AutogradTritonFunc(torch.autograd.Function):
         if use_torch_fwd:
             out_tensors = ctx.torch_fn(ctx.grid, **new_args)
         else:
-            out_tensors = {name: new_args[name].clone() for name in func.out_args}
+            out_tensors = {
+                name: (
+                    new_args[name].clone()
+                    if torch.is_tensor(new_args[name])
+                    else new_args[name]
+                )
+                for name in func.out_args
+            }
             func[grid](**(new_args | out_tensors), **launch_params)
 
         return tuple(out_tensors[name] for name in func.out_args)
@@ -365,7 +372,8 @@ class AutogradTritonFunc(torch.autograd.Function):
             outputs = ctx.torch_fn(ctx.grid, **new_args)
             s = 0
             for name, grad in zip(ctx.out_args, grad_outputs):
-                s += (outputs[name] * grad).sum()
+                if grad is not None:
+                    s = s + (outputs[name] * grad).sum()
             return s
 
         grad_fn = torch.func.grad(

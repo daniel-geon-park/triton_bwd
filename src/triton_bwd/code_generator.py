@@ -458,6 +458,9 @@ class CodeGenerator(ast.NodeVisitor):
             named_args = full_arg_dict(fn, args, kwargs)
             input = named_args["input"]
             shape = named_args["shape"]
+            if len(shape) > 0 and type(shape[0]) in (tuple, list):
+                assert len(shape) == 1
+                shape = shape[0]
             can_reorder = named_args["can_reorder"]
             assert not can_reorder, "can_reorder is True"
             return torch.reshape(input, shape)
