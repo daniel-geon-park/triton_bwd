@@ -37,8 +37,11 @@ class CodeGenerator(ast.NodeVisitor):
             raise NotImplementedError(f"{node} returned NotImplemented")
         return value
 
-    def dereference_name(self, name):
-        absent = object()
+    def dereference_name(self, name, absent=None):
+        error_if_absent = False
+        if absent is None:
+            error_if_absent = True
+            absent = object()
         val = self.func_globals.get(name, absent)
         if val is absent:
             val = self.locals.get(name, absent)
@@ -46,13 +49,13 @@ class CodeGenerator(ast.NodeVisitor):
             val = self.args.get(name, absent)
         if val is absent:
             val = builtin_namespace.get(name, absent)
-        if val is absent:
+        if error_if_absent and val is absent:
             raise ValueError(f"Name {name} not found in globals or args")
         return val
 
     def dynamic_select(self, name, new_value, valid):
         absent = object()
-        old_value = self.locals.get(name, absent)
+        old_value = self.dereference_name(name, absent)
         if old_value is absent:
             # Doesn't matter if valid is False
             self.locals[name] = new_value
