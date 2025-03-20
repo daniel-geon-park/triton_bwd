@@ -1,5 +1,6 @@
 import ast
 import inspect
+import math
 import re
 from contextlib import contextmanager
 from typing import Any
@@ -162,7 +163,7 @@ class CodeGenerator(ast.NodeVisitor):
 
     def dynamic_assert(self, condition, message):
         dynamic_assert(
-            condition,
+            to_trackable(condition, self.device),
             to_trackable(self.valid, self.device),
             message,
         )
@@ -282,7 +283,7 @@ class CodeGenerator(ast.NodeVisitor):
             if input.dtype == torch.bfloat16:
                 input = input.to(torch.float32)
             return input.sum(dim=axis, keepdim=keep_dims)
-        elif fn is tl.max:
+        elif fn in (tl.max, tl.min):
             bound_args = fn.signature.bind(*args, **kwargs)
             bound_args.apply_defaults()
             named_args = bound_args.arguments
@@ -293,7 +294,10 @@ class CodeGenerator(ast.NodeVisitor):
             assert not return_indices
             if input.dtype == torch.bfloat16:
                 input = input.to(torch.float32)
-            return torch.amax(input, dim=axis, keepdim=keep_dims)
+            if fn is tl.min:
+                return torch.amin(input, dim=axis, keepdim=keep_dims)
+            else:
+                return torch.amax(input, dim=axis, keepdim=keep_dims)
         elif isinstance(fn, JITFunction):
             bound_args = fn.signature.bind(*args, **kwargs)
             bound_args.apply_defaults()
@@ -429,16 +433,39 @@ class CodeGenerator(ast.NodeVisitor):
                 input % values == 0, f"{self.call_stack[-1]}:{node.lineno}: "
             )
             return input
+        elif fn is tl.sqrt:
+            named_args = full_arg_dict(fn, args, kwargs)
+            x = named_args["x"]
+            if torch.is_tensor(x):
+                return torch.sqrt(x)
+            return math.sqrt(x)
         elif fn is tl.math.exp2:
             named_args = full_arg_dict(fn, args, kwargs)
             x = named_args["x"]
-            return torch.exp2(x)
+            if torch.is_tensor(x):
+                return torch.exp2(x)
+            return math.exp2(x)
         elif fn is tl.math.log2:
             named_args = full_arg_dict(fn, args, kwargs)
             x = named_args["x"]
-            return torch.log2(x)
+            if torch.is_tensor(x):
+                return torch.log2(x)
+            return math.log2(x)
+        elif fn is tl.reshape:
+            named_args = full_arg_dict(fn, args, kwargs)
+            input = named_args["input"]
+            shape = named_args["shape"]
+            can_reorder = named_args["can_reorder"]
+            assert not can_reorder, "can_reorder is True"
+            return torch.reshape(input, shape)
         elif fn is tl.static_print:
             # TODO
+            return
+        elif fn is tl.device_assert:
+            named_args = full_arg_dict(fn, args, kwargs)
+            cond = named_args["cond"]
+            msg = named_args["msg"]
+            self.dynamic_assert(cond, msg)
             return
         elif fn is range:
             assert not any(torch.is_tensor(arg) for arg in args)
@@ -543,13 +570,16 @@ class CodeGenerator(ast.NodeVisitor):
 
     def visit_Attribute(self, node):
         lhs = self.visit(node.value)
+        if type(lhs) in [int, float, bool]:
+            lhs = to_trackable(lhs, self.device)
         if torch.is_tensor(lhs):
             if node.attr == "to":
                 return "callable", lambda dtype: lhs.to(to_torch_dtype(dtype))
             if node.attr == "dtype":
                 return to_triton_dtype(lhs.dtype)
-            else:
-                raise ValueError(f"Unsupported attribute {node.attr}")
+            if node.attr == "shape":
+                return tuple(lhs.shape)
+            raise ValueError(f"Unsupported attribute {node.attr}")
         return getattr(lhs, node.attr)
 
     def visit_Subscript(self, node):
@@ -621,6 +651,7 @@ dtype_mapping = {
     tl.float16: torch.float16,
     tl.float32: torch.float32,
     tl.float64: torch.float64,
+    tl.int1: torch.bool,
     tl.int8: torch.int8,
     tl.int16: torch.int16,
     tl.int32: torch.int32,
@@ -782,7 +813,8 @@ class Pointer:
         return result
 
     def assign(self, value, mask):
-        assert self.offset.shape == value.shape
+        value = to_trackable(value, self.offset.device)
+        value = value.broadcast_to(self.offset.shape)
         if mask is None:
             mask = torch.ones(value.shape, dtype=torch.bool, device=self.offset.device)
         else:
@@ -790,7 +822,7 @@ class Pointer:
                 mask = torch.full(
                     value.shape, mask, dtype=torch.bool, device=self.offset.device
                 )
-        assert mask is None or mask.shape == value.shape
+        mask = mask.broadcast_to(value.shape)
         self.storage.updates.append((self.offset, value, mask))
 
     @property

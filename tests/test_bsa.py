@@ -10,7 +10,10 @@ def test():
     args["output_attention_score_reduce_method"] = "max"
     q, k, v = args["q"], args["k"], args["v"]
 
-    o1, scores1, m1 = forward(**args, use_torch_fwd=True)
+    o1, scores1, m1 = forward(
+        **args,
+        use_torch_fwd=True,
+    )
     torch.cuda.synchronize()
 
     n = torch.randn_like(o1)

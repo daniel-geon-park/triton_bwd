@@ -10,12 +10,7 @@ import torch.autograd
 from triton import JITFunction
 from triton.runtime.autotuner import Autotuner
 
-from triton_bwd.code_generator import (
-    CodeGenerator,
-    Pointer,
-    convert_arg,
-    underlying,
-)
+from triton_bwd.code_generator import CodeGenerator, Pointer, convert_arg, underlying
 
 
 class BackwardEnabledAutotuner(Autotuner):
@@ -228,24 +223,28 @@ class BackwardEnabledTritonFunc(JITFunction):
         source = inspect.getsource(self.func)
         tree = ast.parse(source)
 
-        def forward(_pid0, _pid1, _pid2, *args, **kwargs):
+        def forward(_pid, grid, *args, **kwargs):
             bound_args = self.signature.bind(*args, **kwargs)
             bound_args.apply_defaults()
             named_args = bound_args.arguments
+
+            pid0 = _pid // (grid[1] * grid[2])
+            pid1 = (_pid // grid[2]) % grid[1]
+            pid2 = _pid % grid[2]
 
             arg_dict = {name: convert_arg(arg) for name, arg in named_args.items()}
             gen = CodeGenerator(
                 call_stack=[self.func.__name__],
                 func_globals=self.func.__globals__,
-                pids=(_pid0, _pid1, _pid2),
+                pids=(pid0, pid1, pid2),
                 args=arg_dict,
                 device=device,
             )
             gen.visit(tree)
             return {
-                name: arg.storage.updates
-                for name, arg in arg_dict.items()
-                if isinstance(arg, Pointer)
+                name: arg_dict[name].storage.updates
+                for name in self.out_args
+                if isinstance(arg_dict[name], Pointer)
             }
 
         def grid_launch(grid, *args, **kwargs):
@@ -258,20 +257,22 @@ class BackwardEnabledTritonFunc(JITFunction):
 
             # Vmap over program_id's
             vmapped_forward = forward
-            for axis in range(3):
-                batch_dims = [None, None, None]
-                batch_dims[axis] = 0
-                in_dims = tuple(batch_dims) + (None,) * len(args)
-                vmapped_forward = torch.func.vmap(
-                    vmapped_forward,
-                    in_dims=in_dims,
-                    chunk_size=batch_chunk_size,
-                )
+            in_dims = (0, None) + (None,) * len(args)
+            vmapped_forward = torch.func.vmap(
+                vmapped_forward,
+                in_dims=in_dims,
+                chunk_size=batch_chunk_size,
+            )
 
+            pids = (
+                torch.arange(grid[0], device=device)[:, None, None]
+                * (grid[1] * grid[2])
+                + torch.arange(grid[1], device=device)[None, :, None] * grid[2]
+                + torch.arange(grid[2], device=device)[None, None, :]
+            )
             outputs = vmapped_forward(
-                torch.arange(grid[0], device=device),
-                torch.arange(grid[1], device=device),
-                torch.arange(grid[2], device=device),
+                pids.flatten(),
+                grid,
                 *args,
                 **kwargs,
             )
@@ -279,6 +280,11 @@ class BackwardEnabledTritonFunc(JITFunction):
             results = {}
             for name in self.out_args:
                 arg = named_args[name]
+
+                if name not in outputs:
+                    results[name] = arg
+                    continue
+
                 updates = outputs[name]
 
                 if len(updates) > 0:
