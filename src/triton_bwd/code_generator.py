@@ -11,6 +11,7 @@ from triton import JITFunction
 from triton.language import block_type, pointer_type
 
 from triton_bwd.constexpr import Constexpr
+from triton_bwd.dynamic_assert import dynamic_assert
 
 RETURN_VAL = "__return_val__"
 
@@ -159,6 +160,13 @@ class CodeGenerator(ast.NodeVisitor):
             new_value = block.locals[name]
             self.dynamic_select(name, new_value, valid)
 
+    def dynamic_assert(self, condition, message):
+        dynamic_assert(
+            condition,
+            to_trackable(self.valid, self.device),
+            message,
+        )
+
     def visit_For(self, node):
         IteratorClass = self.visit(node.iter.func)
         iter_args = [self.visit(arg) for arg in node.iter.args]
@@ -175,10 +183,13 @@ class CodeGenerator(ast.NodeVisitor):
                 iterator = static_iterate()
 
             else:
-                assert (
-                    "max_iters" in iter_kwargs
-                ), "max_iters must be provided for a dynamic range"
+                if "max_iters" not in iter_kwargs:
+                    raise ValueError(
+                        f"{self.call_stack[-1]}:{node.lineno}: "
+                        "max_iters must be provided for a dynamic range"
+                    )
                 max_iters = iter_kwargs["max_iters"]
+                assert not torch.is_tensor(max_iters)
 
                 if len(iter_args) == 1:
                     begin = 0
@@ -191,6 +202,11 @@ class CodeGenerator(ast.NodeVisitor):
                     begin, end, step = iter_args
                 else:
                     raise ValueError(f"Too many arguments for range")
+
+                self.dynamic_assert(
+                    (end - begin + step - 1) // step <= max_iters,
+                    f"{self.call_stack[-1]}:{node.lineno}: " "Range exceeds max_iters",
+                )
 
                 def dynamic_iterate():
                     it = begin
@@ -234,7 +250,9 @@ class CodeGenerator(ast.NodeVisitor):
         return status
 
     def visit_Assert(self, node):
-        # TODO
+        test = self.visit(node.test)
+        msg = self.visit(node.msg)
+        self.dynamic_assert(test, f"{self.call_stack[-1]}:{node.lineno}: " + msg)
         return "continue"
 
     def visit_Pass(self, node):
@@ -407,7 +425,9 @@ class CodeGenerator(ast.NodeVisitor):
             named_args = full_arg_dict(fn, args, kwargs)
             input = named_args["input"]
             values = named_args["values"]
-            # TODO: add assertions
+            self.dynamic_assert(
+                input % values == 0, f"{self.call_stack[-1]}:{node.lineno}: "
+            )
             return input
         elif fn is tl.math.exp2:
             named_args = full_arg_dict(fn, args, kwargs)
