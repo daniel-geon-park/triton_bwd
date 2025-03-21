@@ -32,7 +32,10 @@ class CodeGenerator(ast.NodeVisitor):
         self.locals[name] = value
 
     def visit(self, node: Any):
-        value = super().visit(node)
+        try:
+            value = super().visit(node)
+        except RuntimeError as e:
+            raise ValueError(f"{self.call_stack[-1]}:{node.lineno}: {e}")
         if value is NotImplemented:
             raise NotImplementedError(f"{node} returned NotImplemented")
         return value
@@ -802,11 +805,20 @@ class Pointer:
 
     def value(self, mask, other):
         offset = self.offset
+
         if mask is not None:
             if not torch.is_tensor(mask):
                 mask = torch.full(
                     offset.shape, mask, dtype=torch.bool, device=offset.device
                 )
+
+        dynamic_assert(
+            (0 <= offset) & (offset < self.storage.tensor.shape[0]),
+            mask,
+            "Invalid read offset",
+        )
+
+        if mask is not None:
             offset = torch.where(mask, offset, torch.zeros_like(offset))
 
         result = einx.get_at("[i], ... -> ...", self.storage.tensor, offset)
@@ -829,6 +841,11 @@ class Pointer:
                     value.shape, mask, dtype=torch.bool, device=self.offset.device
                 )
         mask = mask.broadcast_to(value.shape)
+        dynamic_assert(
+            (0 <= self.offset) & (self.offset < self.storage.tensor.shape[0]),
+            mask,
+            "Invalid write offset",
+        )
         self.storage.updates.append((self.offset, value, mask))
 
     @property

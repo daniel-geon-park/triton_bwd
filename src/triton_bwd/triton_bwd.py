@@ -197,20 +197,26 @@ class BackwardEnabledTritonFunc(JITFunction):
         bound_args = self.signature.bind(*args, **kwargs)
         named_args = bound_args.arguments
 
-        grad_args = [named_args[name] for name in self.in_args]
-        other_args = {
-            name: arg for name, arg in named_args.items() if name not in self.in_args
-        }
-        outputs = AutogradTritonFunc.apply(
-            self,
-            torch_fn,
-            grid,
-            other_args,
-            use_torch_fwd,
-            launch_params,
-            *grad_args,
-        )
-        return outputs
+        if use_torch_fwd:
+            out_tensors = torch_fn(grid, **named_args)
+            return [out_tensors[name] for name in self.out_args]
+
+        else:
+            grad_args = [named_args[name] for name in self.in_args]
+            other_args = {
+                name: arg
+                for name, arg in named_args.items()
+                if name not in self.in_args
+            }
+            outputs = AutogradTritonFunc.apply(
+                self,
+                torch_fn,
+                grid,
+                other_args,
+                launch_params,
+                *grad_args,
+            )
+            return outputs
 
     def get_torch_fn(
         self,
@@ -257,21 +263,27 @@ class BackwardEnabledTritonFunc(JITFunction):
 
             # Vmap over program_id's
             vmapped_forward = forward
-            in_dims = (0, None) + (None,) * len(args)
-            vmapped_forward = torch.func.vmap(
-                vmapped_forward,
-                in_dims=in_dims,
-                chunk_size=batch_chunk_size,
-            )
+            no_vmap = os.getenv("TRITON_BWD_NO_VMAP", None) == "1"
+            if not no_vmap:
+                in_dims = (0, None) + (None,) * len(args)
+                vmapped_forward = torch.func.vmap(
+                    vmapped_forward,
+                    in_dims=in_dims,
+                    chunk_size=batch_chunk_size,
+                )
 
-            pids = (
-                torch.arange(grid[0], device=device)[:, None, None]
-                * (grid[1] * grid[2])
-                + torch.arange(grid[1], device=device)[None, :, None] * grid[2]
-                + torch.arange(grid[2], device=device)[None, None, :]
-            )
+                pids = (
+                    torch.arange(grid[0], device=device)[:, None, None]
+                    * (grid[1] * grid[2])
+                    + torch.arange(grid[1], device=device)[None, :, None] * grid[2]
+                    + torch.arange(grid[2], device=device)[None, None, :]
+                ).flatten()
+
+            else:
+                pids = torch.full((), 0, device=device)
+
             outputs = vmapped_forward(
-                pids.flatten(),
+                pids,
                 grid,
                 *args,
                 **kwargs,
@@ -316,7 +328,6 @@ class AutogradTritonFunc(torch.autograd.Function):
         torch_fn: Callable,
         grid: tuple,
         other_args: dict[str, Any],
-        use_torch_fwd: bool,
         launch_params: dict[str, Any],
         *grad_args,
     ):
@@ -344,18 +355,15 @@ class AutogradTritonFunc(torch.autograd.Function):
         new_args = other_args | {
             name: arg for name, arg in zip(func.in_args, grad_args)
         }
-        if use_torch_fwd:
-            out_tensors = ctx.torch_fn(ctx.grid, **new_args)
-        else:
-            out_tensors = {
-                name: (
-                    new_args[name].clone()
-                    if torch.is_tensor(new_args[name])
-                    else new_args[name]
-                )
-                for name in func.out_args
-            }
-            func[grid](**(new_args | out_tensors), **launch_params)
+        out_tensors = {
+            name: (
+                new_args[name].clone()
+                if torch.is_tensor(new_args[name])
+                else new_args[name]
+            )
+            for name in func.out_args
+        }
+        func[grid](**(new_args | out_tensors), **launch_params)
 
         return tuple(out_tensors[name] for name in func.out_args)
 
@@ -383,7 +391,7 @@ class AutogradTritonFunc(torch.autograd.Function):
 
         gradients = grad_fn(*in_args)
 
-        return None, None, None, None, None, None, *gradients
+        return None, None, None, None, None, *gradients
 
 
 def triton_bwd(in_args=None, out_args=None):

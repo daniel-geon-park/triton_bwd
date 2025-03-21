@@ -99,6 +99,8 @@ def print_errors(a, b):
     assert a.shape == b.shape, f"Shapes do not match: {a.shape} != {b.shape}"
     a = a.float()
     b = b.float()
+    a = torch.where(torch.isfinite(a), a, torch.full_like(a, 1e9))
+    b = torch.where(torch.isfinite(b), b, torch.full_like(b, 1e9))
     if a.numel() < 16_000_000:
         quantile = 0.99
         percent = f"{quantile * 100:.0f}%"
