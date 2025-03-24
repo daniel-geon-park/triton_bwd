@@ -438,7 +438,6 @@ def autotune(
             warmup=warmup,
             rep=rep,
             use_cuda_graph=use_cuda_graph,
-            do_bench=do_bench,
         )
 
     return decorator

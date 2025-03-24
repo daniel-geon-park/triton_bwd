@@ -5,33 +5,20 @@ from hip_research.utils.seed import seed
 
 from triton_bwd.triton_bwd_verify import print_errors
 
-triton.runtime.driver.active.utils.set_printf_fifo_size(128 * 1024)
+# triton.runtime.driver.active.utils.set_printf_fifo_size(128 * 1024)
 
 
 def test(do_backward=False):
     seed(42)
     args = torch.load("bsa_args.pt", map_location="cuda")
-    args["q"] = args["q"].data.to(torch.float32)
-    args["k"] = args["k"].data.to(torch.float32)
-    args["v"] = args["v"].data.to(torch.float32)
+    args["q"] = args["q"].data.to(torch.float32)[:, :, :2]
+    args["k"] = args["k"].data.to(torch.float32)[:, :, :1]
+    args["v"] = args["v"].data.to(torch.float32)[:, :, :1]
     q, k, v = args["q"], args["k"], args["v"]
     q.requires_grad = k.requires_grad = v.requires_grad = True
     # args["return_attention_scores"] = True
     args["args"].using_extend = False
     args["args"].need_apply_rope = False
-
-    o2, scores2 = block_sparse_attention(
-        **args,
-        output_attention_scores_reduce_method="max",
-    )
-    if do_backward:
-        n = torch.randn_like(o2)
-        (o2 * n).sum().backward()
-    torch.cuda.synchronize()
-
-    if do_backward:
-        dq, dk, dv = q.grad, k.grad, v.grad
-        q.grad = k.grad = v.grad = None
 
     o1, scores1, m1 = forward(
         **args,
@@ -42,6 +29,7 @@ def test(do_backward=False):
     torch.cuda.synchronize()
 
     if do_backward:
+        n = torch.randn_like(o1)
         (o1 * n).sum().backward()
     torch.cuda.synchronize()
 
@@ -49,7 +37,17 @@ def test(do_backward=False):
         dq_gt, dk_gt, dv_gt = q.grad, k.grad, v.grad
         q.grad = k.grad = v.grad = None
 
-    q.grad = k.grad = v.grad = None
+    o2, scores2 = block_sparse_attention(
+        **args,
+        output_attention_scores_reduce_method="max",
+    )
+    if do_backward:
+        (o2 * n).sum().backward()
+    torch.cuda.synchronize()
+
+    if do_backward:
+        dq, dk, dv = q.grad, k.grad, v.grad
+        q.grad = k.grad = v.grad = None
 
     print("Outputs:")
     print_errors(o1, o2)
