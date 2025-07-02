@@ -395,6 +395,13 @@ class AutogradTritonFunc(torch.autograd.Function):
 
 
 def triton_bwd(in_args=None, out_args=None):
+    """
+    Decorator for Triton functions that enables backward pass.
+    :param in_args: List of input argument names for gradient propagation.
+    If gradient is not needed for an argument, it should be excluded from this list.
+    :param out_args: List of output argument names.
+    All output arguments (tensors whose content may change after the call to the function) must be included.
+    """
     if in_args is None:
         in_args = []
     if out_args is None:
