@@ -10,7 +10,7 @@ import torch.autograd
 from triton import JITFunction
 from triton.runtime.autotuner import Autotuner
 
-from .code_generator import CodeGenerator, Pointer, convert_arg, underlying
+from triton_bwd.code_generator import CodeGenerator, Pointer, convert_arg, underlying
 
 
 class BackwardEnabledAutotuner(Autotuner):

@@ -11,8 +11,8 @@ import triton.language as tl
 from triton import JITFunction
 from triton.language import block_type, pointer_type
 
-from .constexpr import Constexpr
-from .dynamic_assert import dynamic_assert
+from triton_bwd.constexpr import Constexpr
+from triton_bwd.dynamic_assert import dynamic_assert
 
 RETURN_VAL = "__return_val__"
 
