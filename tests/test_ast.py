@@ -24,4 +24,4 @@ def matrix_multiply(
             c[i, j] = sum
 
 
-print(matrix_multiply.abstract_tree)
+print(matrix_multiply.abstract_tree.numbered_repr())

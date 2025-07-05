@@ -122,6 +122,46 @@ class ForLoop:
             + "\n".join(f"    {stmt_repr}" for stmt_repr in stmt_reprs)
         )
 
+    def add_numbers(self):
+        stmt_idx = 0
+        decl_idx = 0
+        result = [
+            (
+                ("L", 0),
+                f"for {self.index_var} in range({self.index_begin}, {self.index_end}, {self.index_step}):",
+            )
+        ]
+        loop_idx = 1
+
+        for name, decl in self.declarations.items():
+            shape = SympyShape(decl)
+            if shape == ():
+                result.append((("D", decl_idx), "    " + f"let {name}: scalar"))
+            else:
+                result.append(
+                    (
+                        ("D", decl_idx),
+                        "    "
+                        + f"let {name}: array({', '.join(map(str, shape.args))})",
+                    )
+                )
+            decl_idx += 1
+
+        for stmt in self.statements:
+            numbered_stmt = stmt.add_numbers()
+            for (kind, num), text in numbered_stmt:
+                if kind == "S":
+                    result.append(((kind, stmt_idx), "    " + text))
+                    stmt_idx += 1
+                elif kind == "L":
+                    result.append(((kind, loop_idx), "    " + text))
+                    loop_idx += 1
+                elif kind == "D":
+                    result.append(((kind, decl_idx), "    " + text))
+                    decl_idx += 1
+
+        return result
+
 
 class Assignment:
     def __init__(self, target: sympy.Basic, value: sympy.Basic):
@@ -130,6 +170,9 @@ class Assignment:
 
     def __repr__(self):
         return f"{self.target} = {self.value}"
+
+    def add_numbers(self):
+        return [(("S", 0), repr(self))]
 
 
 class AbstractNode:
@@ -141,3 +184,12 @@ class AbstractNode:
 
     def __repr__(self):
         return repr(self.content)
+
+    def add_numbers(self):
+        return self.content.add_numbers()
+
+    def numbered_repr(self):
+        numbered = self.add_numbers()
+        return "\n".join(
+            f"{f'{kind}{num}':>5}: {text}" for ((kind, num), text) in numbered
+        )
