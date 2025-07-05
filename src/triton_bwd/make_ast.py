@@ -70,7 +70,7 @@ class OptimizableFunction:
             func_globals=self.func.__globals__,
             args=args,
         )
-        self.abstract_tree = visitor.visit(tree)
+        self.abstract_tree: AbstractNode = visitor.visit(tree)
 
 
 builtin_namespace = {
@@ -151,7 +151,8 @@ class NodeVisitor(ast.NodeVisitor):
 
     def visit_FunctionDef(self, node) -> AbstractNode:
         nodes = self.visit_compound_statement(node.body)
-        return AbstractNode(ForLoop("__root_index", 0, 1, 1, {}, nodes))
+        loop_var = sympy.symbols("__root_index", integer=True)
+        return AbstractNode(ForLoop(loop_var, 0, 1, 1, {}, nodes))
 
     def visit_Return(self, node):
         raise NotImplementedError
@@ -237,9 +238,8 @@ class NodeVisitor(ast.NodeVisitor):
         if loop_var_name in self.locals:
             raise ValueError(f"Loop variable {loop_var_name} already defined.")
 
-        scope = self.scope(
-            extra_locals={loop_var_name: sympy.symbols(loop_var_name, integer=True)}
-        )
+        loop_var = sympy.symbols(loop_var_name, integer=True)
+        scope = self.scope(extra_locals={loop_var_name: loop_var})
         statements = scope.visit_compound_statement(node.body)
 
         declarations = {}
@@ -248,7 +248,7 @@ class NodeVisitor(ast.NodeVisitor):
                 declarations[name] = target
 
         return AbstractNode(
-            ForLoop(loop_var_name, begin, end, step, declarations, statements)
+            ForLoop(loop_var, begin, end, step, declarations, statements)
         )
 
     def visit_compound_statement(self, stmts) -> List[AbstractNode]:

@@ -1,4 +1,4 @@
-from typing import Dict, List, NewType, Optional, Union
+from typing import Dict, List, NewType, Optional, Tuple, Union
 
 import numpy as np
 import sympy
@@ -90,7 +90,7 @@ InOutArray = NewType("InOutArray", np.ndarray)
 class ForLoop:
     def __init__(
         self,
-        index_var: str,
+        index_var: sympy.Symbol,
         index_begin: int,
         index_end: int,
         index_step: int,
@@ -128,6 +128,7 @@ class ForLoop:
         result = [
             (
                 ("L", 0),
+                self,
                 f"for {self.index_var} in range({self.index_begin}, {self.index_end}, {self.index_step}):",
             )
         ]
@@ -136,31 +137,40 @@ class ForLoop:
         for name, decl in self.declarations.items():
             shape = SympyShape(decl)
             if shape == ():
-                result.append((("D", decl_idx), "    " + f"let {name}: scalar"))
+                result.append((("D", decl_idx), decl, f"    let {name}: scalar"))
             else:
                 result.append(
                     (
                         ("D", decl_idx),
-                        "    "
-                        + f"let {name}: array({', '.join(map(str, shape.args))})",
+                        decl,
+                        f"    let {name}: array({', '.join(map(str, shape.args))})",
                     )
                 )
             decl_idx += 1
 
         for stmt in self.statements:
             numbered_stmt = stmt.add_numbers()
-            for (kind, num), text in numbered_stmt:
+            for (kind, num), obj, text in numbered_stmt:
                 if kind == "S":
-                    result.append(((kind, stmt_idx), "    " + text))
+                    result.append(((kind, stmt_idx), obj, "    " + text))
                     stmt_idx += 1
                 elif kind == "L":
-                    result.append(((kind, loop_idx), "    " + text))
+                    result.append(((kind, loop_idx), obj, "    " + text))
                     loop_idx += 1
                 elif kind == "D":
-                    result.append(((kind, decl_idx), "    " + text))
+                    result.append(((kind, decl_idx), obj, "    " + text))
                     decl_idx += 1
 
         return result
+
+    def get_stmt_impl(self, i: int, loop_idx: int, stmt_idx: int):
+        loop_idx += 1
+        for stmt in self.statements:
+            r, loop_idx, stmt_idx = stmt.get_stmt_impl(i, loop_idx, stmt_idx)
+            if r is not None:
+                S, loop_nest = r
+                return (S, [self] + loop_nest), loop_idx, stmt_idx
+        return None, loop_idx, stmt_idx
 
 
 class Assignment:
@@ -172,7 +182,12 @@ class Assignment:
         return f"{self.target} = {self.value}"
 
     def add_numbers(self):
-        return [(("S", 0), repr(self))]
+        return [(("S", 0), self, repr(self))]
+
+    def get_stmt_impl(self, i: int, loop_idx: int, stmt_idx: int):
+        if i == stmt_idx:
+            return (self, []), loop_idx, stmt_idx + 1
+        return None, loop_idx, stmt_idx + 1
 
 
 class AbstractNode:
@@ -191,5 +206,61 @@ class AbstractNode:
     def numbered_repr(self):
         numbered = self.add_numbers()
         return "\n".join(
-            f"{f'{kind}{num}':>5}: {text}" for ((kind, num), text) in numbered
+            f"{f'{kind}{num}':>5}: {text}" for ((kind, num), _, text) in numbered
         )
+
+    def get_stmt_impl(self, i: int, loop_idx: int, stmt_idx: int):
+        return self.content.get_stmt_impl(i, loop_idx, stmt_idx)
+
+    def get_stmt(self, i: int) -> Tuple[Assignment, List[ForLoop]]:
+        (S, loop_nest), _, _ = self.get_stmt_impl(i, 0, 0)
+        return S, loop_nest
+
+    def compute_dependence(
+        self,
+        index_s: sympy.Basic,
+        nest_s: List[ForLoop],
+        index_t: sympy.Basic,
+        nest_t: List[ForLoop],
+    ):
+        for loop_s in nest_s:
+            poly = sympy.Poly(index_s, loop_s.index_var)
+            print(poly.is_linear)
+        pass
+
+    def find_dependence(self, i: int, j: int):
+        S, nest_S = self.get_stmt(i)
+        T, nest_T = self.get_stmt(j)
+        S_stores = get_mem_accesses(S.target)
+        S_loads = get_mem_accesses(S.value)
+        T_stores = get_mem_accesses(T.target)
+        T_loads = get_mem_accesses(T.value)
+        for name_s, index_s in S_stores:
+            for name_t, index_t in T_stores:
+                if name_s == name_t:
+                    self.compute_dependence(index_s, nest_S, index_t, nest_T)
+            for name_t, index_t in T_loads:
+                if name_s == name_t:
+                    self.compute_dependence(index_s, nest_S, index_t, nest_T)
+        for name_s, index_s in S_loads:
+            for name_t, index_t in T_stores:
+                if name_s == name_t:
+                    self.compute_dependence(index_s, nest_S, index_t, nest_T)
+
+
+def get_mem_accesses(expr: sympy.Basic) -> List[Tuple[str, sympy.Basic]]:
+    if isinstance(expr, sympy.Symbol):
+        return [(expr.name, sympy.Number(0))]
+    if isinstance(expr, SympyIndexing):
+        array, index = expr.args
+        assert isinstance(array, sympy.IndexedBase)
+        flat_index = sympy.Number(0)
+        shape = SympyShape(array)
+        for dim, idx in zip(shape.args, index.args):
+            flat_index = flat_index * dim + idx
+        return [(array.name, flat_index)]
+
+    results = []
+    for arg in expr.args:
+        results.extend(get_mem_accesses(arg))
+    return results
