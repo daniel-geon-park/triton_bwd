@@ -2,7 +2,10 @@ from typing import Dict, List, NewType, Optional, Tuple, Union
 
 import numpy as np
 import sympy
+import z3
 from sympy.solvers.solveset import linear_coeffs
+
+from triton_bwd.utils import sympy_to_z3
 
 
 class SympyIndexing(sympy.Function):
@@ -82,7 +85,16 @@ class IntSpec:
         return sympy.symbols(self.name, integer=True)
 
 
-ArgSpec = Union[ArraySpec, IntSpec]
+class FloatSpec:
+    def __init__(self):
+        self.name: Optional[str] = None
+
+    def symbol(self) -> sympy.Symbol:
+        assert self.name is not None
+        return sympy.symbols(self.name, real=True)
+
+
+ArgSpec = Union[ArraySpec, IntSpec, FloatSpec]
 InArray = NewType("InArray", np.ndarray)
 OutArray = NewType("OutArray", np.ndarray)
 InOutArray = NewType("InOutArray", np.ndarray)
@@ -92,9 +104,9 @@ class ForLoop:
     def __init__(
         self,
         index_var: sympy.Symbol,
-        index_begin: int,
-        index_end: int,
-        index_step: int,
+        index_begin: sympy.Basic,
+        index_end: sympy.Basic,
+        index_step: sympy.Basic,
         declarations: Dict[str, sympy.Basic],
         statements: List["AbstractNode"],
     ):
@@ -166,12 +178,14 @@ class ForLoop:
         return result
 
     def get_stmt_impl(self, i: int, loop_idx: int, stmt_idx: int):
+        my_loop_idx = loop_idx
         loop_idx += 1
         for stmt in self.statements:
             r, loop_idx, stmt_idx = stmt.get_stmt_impl(i, loop_idx, stmt_idx)
             if r is not None:
-                S, loop_nest = r
-                return (S, [self] + loop_nest), loop_idx, stmt_idx
+                S, loop_nest, loop_idx_nest = r
+                new_r = (S, [self] + loop_nest, [my_loop_idx] + loop_idx_nest)
+                return new_r, loop_idx, stmt_idx
         return None, loop_idx, stmt_idx
 
 
@@ -188,7 +202,7 @@ class Assignment:
 
     def get_stmt_impl(self, i: int, loop_idx: int, stmt_idx: int):
         if i == stmt_idx:
-            return (self, []), loop_idx, stmt_idx + 1
+            return (self, [], []), loop_idx, stmt_idx + 1
         return None, loop_idx, stmt_idx + 1
 
 
@@ -214,25 +228,40 @@ class AbstractNode:
     def get_stmt_impl(self, i: int, loop_idx: int, stmt_idx: int):
         return self.content.get_stmt_impl(i, loop_idx, stmt_idx)
 
-    def get_stmt(self, i: int) -> Tuple[Assignment, List[ForLoop]]:
-        (S, loop_nest), _, _ = self.get_stmt_impl(i, 0, 0)
-        return S, loop_nest
+    def get_stmt(self, i: int) -> Tuple[Assignment, List[ForLoop], List[int]]:
+        result, _, _ = self.get_stmt_impl(i, 0, 0)
+        return result
 
     def find_dependence(self, i: int, j: int):
-        S, nest_S = self.get_stmt(i)
-        T, nest_T = self.get_stmt(j)
+        S, nest_S, nest_idx_S = self.get_stmt(i)
+        T, nest_T, nest_idx_T = self.get_stmt(j)
         S_stores = get_mem_accesses(S.target)
         S_loads = get_mem_accesses(S.value)
         T_stores = get_mem_accesses(T.target)
         T_loads = get_mem_accesses(T.value)
+        dependencies = []
+        # Flow dependencies
         for name_s, index_s in S_stores:
-            for name_t, index_t in [*T_stores, *T_loads]:
+            for name_t, index_t in T_loads:
                 if name_s == name_t:
-                    dependence_level(i < j, index_s, nest_S, index_t, nest_T)
+                    u = dependence_level(i < j, index_s, nest_S, index_t, nest_T)
+                    if u is not None:
+                        dependencies.append(("flow", u, name_s))
+        # Antidependencies
         for name_s, index_s in S_loads:
             for name_t, index_t in T_stores:
                 if name_s == name_t:
-                    dependence_level(i < j, index_s, nest_S, index_t, nest_T)
+                    u = dependence_level(i < j, index_s, nest_S, index_t, nest_T)
+                    if u is not None:
+                        dependencies.append(("anti", u, name_s))
+        # Output dependencies
+        for name_s, index_s in S_stores:
+            for name_t, index_t in T_stores:
+                if name_s == name_t:
+                    u = dependence_level(i < j, index_s, nest_S, index_t, nest_T)
+                    if u is not None:
+                        dependencies.append(("outp", u, name_s))
+        return dependencies
 
 
 def dependence_level(
@@ -254,46 +283,98 @@ def dependence_level(
         else:
             break
 
-    for u in range(num_common_loops):
-        lhs = 0
-        inequalities = []
-        free_vars = []
-        for level in range(num_common_loops):  # FIXME: +1 ?
-            i_level = sympy.Symbol(f"__i{level}")
-            free_vars.append(i_level)
-            inequalities.append(nest_s[level].index_begin <= i_level)
-            inequalities.append(i_level < nest_s[level].index_end)
-            if level < u:
-                j_level = i_level
-            else:
-                j_level = sympy.Symbol(f"__j{level}")
-                free_vars.append(j_level)
-                inequalities.append(nest_t[level].index_begin <= j_level)
-                inequalities.append(j_level < nest_t[level].index_end)
-            if level == u:
-                inequalities.append(i_level < j_level)
-            lhs = lhs + ai[level] * i_level - bi[level] * j_level
-        for level in range(num_common_loops, len(ai)):
-            i_level = sympy.Symbol(f"__i{level}")
-            free_vars.append(i_level)
-            inequalities.append(nest_s[level].index_begin <= i_level)
-            inequalities.append(i_level < nest_s[level].index_end)
-            lhs = lhs + ai[level] * i_level
-        for level in range(num_common_loops, len(bi)):
-            j_level = sympy.Symbol(f"__j{level}")
-            free_vars.append(j_level)
-            inequalities.append(nest_t[level].index_begin <= j_level)
-            inequalities.append(j_level < nest_t[level].index_end)
-            lhs = lhs - bi[level] * j_level
-        lhs = lhs + (a0 - b0)
-        print(f"{u}:", lhs, "== 0,", inequalities)
-        *ci, c0 = linear_coeffs(lhs, *free_vars)
-        if not (c0 % gcd(ci)).equals(0):
-            # There is no dependence at this level
-            continue
-
-    print()
+    for u in range(num_common_loops + (1 if s_before_t else 0)):
+        indep_proven = prove_independence(
+            u,
+            num_common_loops,
+            ai,
+            a0,
+            bi,
+            b0,
+            nest_s,
+            nest_t,
+        )
+        if not indep_proven:
+            return u
     return None  # There is no dependence
+
+
+def prove_independence(
+    u: int,
+    num_common_loops: int,
+    ai: List[sympy.Expr],
+    a0: sympy.Expr,
+    bi: List[sympy.Expr],
+    b0: sympy.Expr,
+    nest_s: List[ForLoop],
+    nest_t: List[ForLoop],
+):
+    lhs = 0
+    coeffs = set()
+    free_vars = []
+    constraints = []
+
+    for level in range(num_common_loops):
+        ik = z3.Int(f"i{level}")
+        jk = z3.Int(f"j{level}")
+        free_vars.extend([ik, jk])
+        ak_vars, ak = sympy_to_z3(ai[level])
+        bk_vars, bk = sympy_to_z3(bi[level])
+        lhs = lhs + ak * ik - bk * jk
+        pk_vars, pk = sympy_to_z3(nest_s[level].index_begin)
+        qk_vars, qk = sympy_to_z3(nest_s[level].index_end - 1)
+        constraints.extend([pk <= ik, ik <= qk])
+        constraints.extend([pk <= jk, jk <= qk])
+        if level < u:  # s = 0
+            constraints.append(ik == jk)
+        elif level == u:  # s = 1
+            constraints.append(ik <= jk - 1)
+        for var in ak_vars + bk_vars + pk_vars + qk_vars:
+            coeffs.add(var)
+
+    for level in range(num_common_loops, len(ai)):
+        ik = z3.Int(f"i{level}")
+        free_vars.append(ik)
+        ak_vars, ak = sympy_to_z3(ai[level])
+        lhs = lhs + ak * ik
+        pk_vars, pk = sympy_to_z3(nest_s[level].index_begin)
+        qk_vars, qk = sympy_to_z3(nest_s[level].index_end - 1)
+        constraints.extend([pk <= ik, ik <= qk])
+        for var in ak_vars + pk_vars + qk_vars:
+            coeffs.add(var)
+
+    for level in range(num_common_loops, len(bi)):
+        jk = z3.Int(f"j{level}")
+        free_vars.append(jk)
+        bk_vars, bk = sympy_to_z3(bi[level])
+        lhs = lhs - bk * jk
+        pk_vars, pk = sympy_to_z3(nest_t[level].index_begin)
+        qk_vars, qk = sympy_to_z3(nest_t[level].index_end - 1)
+        constraints.extend([pk <= jk, jk <= qk])
+        for var in bk_vars + pk_vars + qk_vars:
+            coeffs.add(var)
+
+    c0_vars, c0 = sympy_to_z3(b0 - a0)
+    for var in c0_vars:
+        coeffs.add(var)
+    coeffs = list(coeffs)
+
+    solver = z3.Solver()
+    sol_exists = z3.Exists(free_vars, z3.And(lhs == c0, *constraints))
+    if len(coeffs) > 0:
+        coeffs_constraints = []
+        for var in coeffs:
+            coeffs_constraints.append(var >= 16)  # FIXME: this is a hack
+        coeffs_constraints = z3.And(*coeffs_constraints)
+        solver.add(z3.ForAll(coeffs, z3.Or(sol_exists, z3.Not(coeffs_constraints))))
+    else:
+        solver.add(sol_exists)
+    solution = solver.check()
+
+    if solution == z3.unsat:
+        return True
+
+    return False
 
 
 def gcd(ns: List[sympy.Basic]) -> sympy.Basic:

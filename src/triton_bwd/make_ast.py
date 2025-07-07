@@ -48,6 +48,10 @@ class OptimizableFunction:
                     spec = IntSpec()
                     spec.name = param.name
                     arg_specs[param.name] = spec
+                elif param.annotation is float:
+                    spec = FloatSpec()
+                    spec.name = param.name
+                    arg_specs[param.name] = spec
                 elif param.annotation in [InArray, OutArray, InOutArray]:
                     # Array argument must have a spec defined
                     raise ValueError(
@@ -152,7 +156,11 @@ class NodeVisitor(ast.NodeVisitor):
     def visit_FunctionDef(self, node) -> AbstractNode:
         nodes = self.visit_compound_statement(node.body)
         loop_var = sympy.symbols("__root_index", integer=True)
-        return AbstractNode(ForLoop(loop_var, 0, 1, 1, {}, nodes))
+        return AbstractNode(
+            ForLoop(
+                loop_var, sympy.Number(0), sympy.Number(1), sympy.Number(1), {}, nodes
+            )
+        )
 
     def visit_Return(self, node):
         raise NotImplementedError
@@ -222,12 +230,12 @@ class NodeVisitor(ast.NodeVisitor):
 
         iter_args = [self.visit(arg) for arg in node.iter.args]
         if len(iter_args) == 1:
-            begin = 0
+            begin = sympy.Number(0)
             end = iter_args[0]
-            step = 1
+            step = sympy.Number(1)
         elif len(iter_args) == 2:
             begin, end = iter_args
-            step = 1
+            step = sympy.Number(1)
         elif len(iter_args) == 3:
             begin, end, step = iter_args
         else:
