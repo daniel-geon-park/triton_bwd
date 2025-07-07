@@ -2,6 +2,7 @@ from typing import Dict, List, NewType, Optional, Tuple, Union
 
 import numpy as np
 import sympy
+from sympy.solvers.solveset import linear_coeffs
 
 
 class SympyIndexing(sympy.Function):
@@ -97,6 +98,7 @@ class ForLoop:
         declarations: Dict[str, sympy.Basic],
         statements: List["AbstractNode"],
     ):
+        assert index_step == 1, "Only step size of 1 is supported for now."
         self.index_var = index_var
         self.index_begin = index_begin
         self.index_end = index_end
@@ -216,18 +218,6 @@ class AbstractNode:
         (S, loop_nest), _, _ = self.get_stmt_impl(i, 0, 0)
         return S, loop_nest
 
-    def compute_dependence(
-        self,
-        index_s: sympy.Basic,
-        nest_s: List[ForLoop],
-        index_t: sympy.Basic,
-        nest_t: List[ForLoop],
-    ):
-        for loop_s in nest_s:
-            poly = sympy.Poly(index_s, loop_s.index_var)
-            print(poly.is_linear)
-        pass
-
     def find_dependence(self, i: int, j: int):
         S, nest_S = self.get_stmt(i)
         T, nest_T = self.get_stmt(j)
@@ -236,16 +226,81 @@ class AbstractNode:
         T_stores = get_mem_accesses(T.target)
         T_loads = get_mem_accesses(T.value)
         for name_s, index_s in S_stores:
-            for name_t, index_t in T_stores:
+            for name_t, index_t in [*T_stores, *T_loads]:
                 if name_s == name_t:
-                    self.compute_dependence(index_s, nest_S, index_t, nest_T)
-            for name_t, index_t in T_loads:
-                if name_s == name_t:
-                    self.compute_dependence(index_s, nest_S, index_t, nest_T)
+                    dependence_level(i < j, index_s, nest_S, index_t, nest_T)
         for name_s, index_s in S_loads:
             for name_t, index_t in T_stores:
                 if name_s == name_t:
-                    self.compute_dependence(index_s, nest_S, index_t, nest_T)
+                    dependence_level(i < j, index_s, nest_S, index_t, nest_T)
+
+
+def dependence_level(
+    s_before_t: bool,
+    index_s: sympy.Basic,
+    nest_s: List[ForLoop],
+    index_t: sympy.Basic,
+    nest_t: List[ForLoop],
+):
+    loop_indices_s = [loop_s.index_var for loop_s in nest_s]
+    loop_indices_t = [loop_t.index_var for loop_t in nest_t]
+    *ai, a0 = linear_coeffs(index_s, *loop_indices_s)
+    *bi, b0 = linear_coeffs(index_t, *loop_indices_t)
+
+    num_common_loops = 0
+    for loop_s, loop_t in zip(nest_s, nest_t):
+        if loop_s is loop_t:
+            num_common_loops += 1
+        else:
+            break
+
+    for u in range(num_common_loops):
+        lhs = 0
+        inequalities = []
+        free_vars = []
+        for level in range(num_common_loops):  # FIXME: +1 ?
+            i_level = sympy.Symbol(f"__i{level}")
+            free_vars.append(i_level)
+            inequalities.append(nest_s[level].index_begin <= i_level)
+            inequalities.append(i_level < nest_s[level].index_end)
+            if level < u:
+                j_level = i_level
+            else:
+                j_level = sympy.Symbol(f"__j{level}")
+                free_vars.append(j_level)
+                inequalities.append(nest_t[level].index_begin <= j_level)
+                inequalities.append(j_level < nest_t[level].index_end)
+            if level == u:
+                inequalities.append(i_level < j_level)
+            lhs = lhs + ai[level] * i_level - bi[level] * j_level
+        for level in range(num_common_loops, len(ai)):
+            i_level = sympy.Symbol(f"__i{level}")
+            free_vars.append(i_level)
+            inequalities.append(nest_s[level].index_begin <= i_level)
+            inequalities.append(i_level < nest_s[level].index_end)
+            lhs = lhs + ai[level] * i_level
+        for level in range(num_common_loops, len(bi)):
+            j_level = sympy.Symbol(f"__j{level}")
+            free_vars.append(j_level)
+            inequalities.append(nest_t[level].index_begin <= j_level)
+            inequalities.append(j_level < nest_t[level].index_end)
+            lhs = lhs - bi[level] * j_level
+        lhs = lhs + (a0 - b0)
+        print(f"{u}:", lhs, "== 0,", inequalities)
+        *ci, c0 = linear_coeffs(lhs, *free_vars)
+        if not (c0 % gcd(ci)).equals(0):
+            # There is no dependence at this level
+            continue
+
+    print()
+    return None  # There is no dependence
+
+
+def gcd(ns: List[sympy.Basic]) -> sympy.Basic:
+    result = 1
+    for n in ns:
+        result = sympy.gcd(result, n)
+    return result
 
 
 def get_mem_accesses(expr: sympy.Basic) -> List[Tuple[str, sympy.Basic]]:

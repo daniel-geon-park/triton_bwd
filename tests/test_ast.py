@@ -18,11 +18,9 @@ def matrix_multiply(
 ):
     for i in range(N):
         for j in range(M):
-            sum = 0.0
             for k in range(K):
-                sum += a[i, k] * b[k, j]
-            c[i, j] = sum
+                c[i, j] += a[i, k] * b[k, j]
 
 
 print(matrix_multiply.abstract_tree.numbered_repr())
-print(matrix_multiply.abstract_tree.find_dependence(1, 2))
+print(matrix_multiply.abstract_tree.find_dependence(0, 0))
