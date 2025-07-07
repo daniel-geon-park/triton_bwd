@@ -23,8 +23,9 @@ def matrix_multiply(
                 c[i, j] += a[i, k] * b[k, j]
 
 
-print(matrix_multiply.abstract_tree.numbered_repr())
-print(matrix_multiply.abstract_tree.find_dependence(0, 0))
+def test_matmul():
+    print(matrix_multiply.abstract_tree.numbered_repr())
+    print(matrix_multiply.abstract_tree.find_dependence(0, 0))
 
 
 @optimize(
@@ -35,7 +36,7 @@ print(matrix_multiply.abstract_tree.find_dependence(0, 0))
         "f": ArraySpec(dtype="float32", dims=("N", "M")),
     }
 )
-def toy_example(
+def book_example(
     a: InOutArray,
     b: InOutArray,
     c: InOutArray,
@@ -55,9 +56,10 @@ def toy_example(
     z = y + 3
 
 
-print(toy_example.abstract_tree.numbered_repr())
-for i in range(6):
-    for j in range(6):
-        deps = toy_example.abstract_tree.find_dependence(i, j)
-        if deps:
-            print(f"Dependence from {i+1} to {j+1}: {deps}")
+def test_book_example():
+    print(book_example.abstract_tree.numbered_repr())
+    for i in range(6):
+        for j in range(6):
+            deps = book_example.abstract_tree.find_dependence(i, j)
+            if deps:
+                print(f"Dependence from {i+1} to {j+1}: {deps}")
