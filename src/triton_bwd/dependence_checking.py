@@ -62,8 +62,8 @@ def prove_independence(
     constraints = []
 
     for level in range(num_common_loops):
-        ik = z3.Int(f"i{level}")
-        jk = z3.Int(f"j{level}")
+        ik = z3.Int(f"__i{level}")
+        jk = z3.Int(f"__j{level}")
         free_vars.extend([ik, jk])
         ak_vars, ak = sympy_to_z3(ai[level])
         bk_vars, bk = sympy_to_z3(bi[level])
@@ -80,7 +80,7 @@ def prove_independence(
             coeffs.add(var)
 
     for level in range(num_common_loops, len(ai)):
-        ik = z3.Int(f"i{level}")
+        ik = z3.Int(f"__i{level}")
         free_vars.append(ik)
         ak_vars, ak = sympy_to_z3(ai[level])
         lhs = lhs + ak * ik
@@ -91,7 +91,7 @@ def prove_independence(
             coeffs.add(var)
 
     for level in range(num_common_loops, len(bi)):
-        jk = z3.Int(f"j{level}")
+        jk = z3.Int(f"__j{level}")
         free_vars.append(jk)
         bk_vars, bk = sympy_to_z3(bi[level])
         lhs = lhs - bk * jk
