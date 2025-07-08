@@ -58,8 +58,22 @@ def book_example(
 
 def test_book_example():
     print(book_example.abstract_tree.numbered_repr())
+    book_example.abstract_tree.find_dependence(1, 1)
+    dependencies = set()
     for i in range(6):
         for j in range(6):
             deps = book_example.abstract_tree.find_dependence(i, j)
             if deps:
                 print(f"Dependence from {i+1} to {j+1}: {deps}")
+            for dep in deps:
+                dependencies.add(((i, j), dep))
+    assert dependencies == {
+        ((0, 1), ("flow", 1, "x")),
+        ((0, 4), ("flow", 1, "x")),
+        ((2, 5), ("anti", 1, "z")),
+        ((3, 1), ("outp", 1, "c")),
+        ((3, 2), ("flow", 1, "c")),
+        ((4, 4), ("flow", 2, "f")),
+        ((1, 2), ("flow", 1, "c")),
+        ((2, 3), ("flow", 2, "a")),
+    }

@@ -389,6 +389,8 @@ def get_mem_accesses(expr: sympy.Basic) -> List[Tuple[str, sympy.Basic]]:
         return [(expr.name, sympy.Number(0))]
     if isinstance(expr, SympyIndexing):
         array, index = expr.args
+        if not isinstance(index, sympy.Tuple):
+            index = sympy.Tuple(index)
         assert isinstance(array, sympy.IndexedBase)
         flat_index = sympy.Number(0)
         shape = SympyShape(array)
