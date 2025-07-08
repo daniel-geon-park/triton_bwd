@@ -26,7 +26,6 @@ def sympy_to_z3(sympy_exp: Expr):
 
 def _sympy_to_z3_rec(var_map, e):
     """recursive call for sympy_to_z3()"""
-
     rv = None
 
     if not isinstance(e, Expr):
@@ -34,38 +33,34 @@ def _sympy_to_z3_rec(var_map, e):
 
     if isinstance(e, Symbol):
         rv = var_map.get(e.name)
-
         if rv is None:
             raise RuntimeError("No var was corresponds to symbol '" + str(e) + "'")
 
     elif isinstance(e, Number):
         rv = int(e) if e.is_integer else float(e)
+
     elif isinstance(e, Mul):
         rv = _sympy_to_z3_rec(var_map, e.args[0])
-
         for child in e.args[1:]:
             rv *= _sympy_to_z3_rec(var_map, child)
+
     elif isinstance(e, Add):
         rv = _sympy_to_z3_rec(var_map, e.args[0])
-
         for child in e.args[1:]:
             rv += _sympy_to_z3_rec(var_map, child)
+
     elif isinstance(e, Pow):
         term = _sympy_to_z3_rec(var_map, e.args[0])
         exponent = _sympy_to_z3_rec(var_map, e.args[1])
-
         if exponent == 0.5:
-            # sqrt
             rv = Sqrt(term)
         else:
             rv = term**exponent
 
     if rv is None:
         raise RuntimeError(
-            "Type '"
-            + str(type(e))
-            + "' is not yet implemented for convertion to a z3 expresion. "
-            "Subexpression was '" + str(e) + "'."
+            f"Type '{str(type(e))}' is not yet implemented for convertion to a z3 expresion. "
+            f"Subexpression was '{str(e)}'."
         )
 
     return rv

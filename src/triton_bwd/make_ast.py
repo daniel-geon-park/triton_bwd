@@ -6,6 +6,7 @@ from typing import Any, Callable
 
 from triton_bwd.abtract_tree import *
 from triton_bwd.constexpr import Constexpr
+from triton_bwd.sympy_utils import SympyIndexing
 
 
 class OptimizableFunction:
