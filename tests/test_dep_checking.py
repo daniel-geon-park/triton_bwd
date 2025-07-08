@@ -25,7 +25,8 @@ def matrix_multiply(
 
 def test_matmul():
     print(matrix_multiply.abstract_tree.numbered_repr())
-    print(matrix_multiply.abstract_tree.find_dependence(0, 0))
+    result = set(matrix_multiply.abstract_tree.find_dependence(0, 0))
+    assert result == {("flow", 3, "c"), ("anti", 3, "c"), ("outp", 3, "c")}
 
 
 @optimize(
