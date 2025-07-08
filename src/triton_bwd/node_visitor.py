@@ -1,122 +1,12 @@
 import ast
-import inspect
 import re
-from types import FunctionType
-from typing import Any, Callable
+from typing import Any, Dict, List, Union
 
-from triton_bwd.abtract_tree import *
+import sympy
+
+from triton_bwd.abtract_tree import AbstractNode, Assignment, ForLoop
 from triton_bwd.constexpr import Constexpr
-from triton_bwd.sympy_utils import SympyIndexing
-
-
-class OptimizableFunction:
-    def __init__(
-        self,
-        func: FunctionType,
-        arg_specs: Dict[str, ArgSpec],
-    ):
-        self.func = func
-
-        signature = inspect.signature(func)
-        for _, param in signature.parameters.items():
-            if param.name in arg_specs:
-                spec = arg_specs[param.name]
-                spec.name = param.name
-                if isinstance(spec, ArraySpec):
-                    if param.annotation is InArray:
-                        spec.kind = "in"
-                    elif param.annotation is OutArray:
-                        spec.kind = "out"
-                    elif param.annotation is InOutArray:
-                        spec.kind = "in_out"
-                    else:
-                        raise ValueError(
-                            f"Argument {param.name} must be annotated with "
-                            f"InArray, OutArray, or InOutArray, but got "
-                            f"{param.annotation}"
-                        )
-                else:
-                    raise ValueError(
-                        f"Argument {param.name} has unsupported spec type: "
-                        f"{type(spec)}"
-                    )
-            else:
-                if param.annotation is param.empty:
-                    raise ValueError(
-                        f"A type annotation is missing on argument {param.name}."
-                    )
-                if param.annotation is int:
-                    spec = IntSpec()
-                    spec.name = param.name
-                    arg_specs[param.name] = spec
-                elif param.annotation is float:
-                    spec = FloatSpec()
-                    spec.name = param.name
-                    arg_specs[param.name] = spec
-                elif param.annotation in [InArray, OutArray, InOutArray]:
-                    # Array argument must have a spec defined
-                    raise ValueError(
-                        f"Array argument {param.name} must have a spec defined."
-                    )
-                else:
-                    raise ValueError(
-                        f"Argument {param.name} has unsupported type: "
-                        f"{param.annotation}"
-                    )
-
-        self.arg_specs = arg_specs
-
-        source = inspect.getsource(self.func)
-        tree = ast.parse(source)
-
-        args = {name: spec.symbol() for name, spec in self.arg_specs.items()}
-        visitor = NodeVisitor(
-            call_stack=[self.func.__name__],
-            func_globals=self.func.__globals__,
-            args=args,
-        )
-        self.abstract_tree: AbstractNode = visitor.visit(tree)
-
-
-builtin_namespace = {
-    _.__name__: _ for _ in (len, list, range, float, int, isinstance, getattr)
-}
-
-_method_name_for_bin_op = {
-    ast.Add: "__add__",
-    ast.Sub: "__sub__",
-    ast.Mult: "__mul__",
-    ast.Div: "__truediv__",
-    ast.FloorDiv: "__floordiv__",
-    ast.Mod: "__mod__",
-    ast.Pow: "__pow__",
-    ast.LShift: "__lshift__",
-    ast.RShift: "__rshift__",
-    ast.BitAnd: "__and__",
-    ast.BitOr: "__or__",
-    ast.BitXor: "__xor__",
-    ast.Eq: "__eq__",
-    ast.NotEq: "__ne__",
-    ast.Lt: "__lt__",
-    ast.LtE: "__le__",
-    ast.Gt: "__gt__",
-    ast.GtE: "__ge__",
-}
-
-
-def _apply_binary_method(op, lhs, rhs):
-    if isinstance(op, ast.Is):
-        return lhs is rhs
-    if isinstance(op, ast.IsNot):
-        return lhs is not rhs
-    op_name = _method_name_for_bin_op.get(type(op))
-    rev_op_name = re.sub(r"__(.*)__", r"__r\1__", op_name)
-    assert op_name is not None
-    if isinstance(lhs, sympy.Basic):
-        return getattr(lhs, op_name)(rhs)
-    if isinstance(rhs, sympy.Basic):
-        return getattr(rhs, rev_op_name)(lhs)
-    return getattr(Constexpr(lhs), op_name)(Constexpr(rhs)).value
+from triton_bwd.sympy_utils import SympyIndexing, SympyShape
 
 
 class NodeVisitor(ast.NodeVisitor):
@@ -447,14 +337,41 @@ class NodeVisitor(ast.NodeVisitor):
         return val
 
 
-def optimize(
-    arg_specs: Dict[str, ArgSpec]
-) -> Callable[[FunctionType], OptimizableFunction]:
+builtin_namespace = {
+    _.__name__: _ for _ in (len, list, range, float, int, isinstance, getattr)
+}
+_method_name_for_bin_op = {
+    ast.Add: "__add__",
+    ast.Sub: "__sub__",
+    ast.Mult: "__mul__",
+    ast.Div: "__truediv__",
+    ast.FloorDiv: "__floordiv__",
+    ast.Mod: "__mod__",
+    ast.Pow: "__pow__",
+    ast.LShift: "__lshift__",
+    ast.RShift: "__rshift__",
+    ast.BitAnd: "__and__",
+    ast.BitOr: "__or__",
+    ast.BitXor: "__xor__",
+    ast.Eq: "__eq__",
+    ast.NotEq: "__ne__",
+    ast.Lt: "__lt__",
+    ast.LtE: "__le__",
+    ast.Gt: "__gt__",
+    ast.GtE: "__ge__",
+}
 
-    def wrapper(func: FunctionType) -> OptimizableFunction:
-        return OptimizableFunction(
-            func=func,
-            arg_specs=arg_specs,
-        )
 
-    return wrapper
+def _apply_binary_method(op, lhs, rhs):
+    if isinstance(op, ast.Is):
+        return lhs is rhs
+    if isinstance(op, ast.IsNot):
+        return lhs is not rhs
+    op_name = _method_name_for_bin_op.get(type(op))
+    rev_op_name = re.sub(r"__(.*)__", r"__r\1__", op_name)
+    assert op_name is not None
+    if isinstance(lhs, sympy.Basic):
+        return getattr(lhs, op_name)(rhs)
+    if isinstance(rhs, sympy.Basic):
+        return getattr(rhs, rev_op_name)(lhs)
+    return getattr(Constexpr(lhs), op_name)(Constexpr(rhs)).value

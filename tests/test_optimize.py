@@ -1,5 +1,5 @@
 from triton_bwd.abtract_tree import InOutArray
-from triton_bwd.make_ast import ArraySpec, InArray, OutArray, optimize
+from triton_bwd.optimize import ArraySpec, InArray, OutArray, optimize
 
 
 @optimize(
