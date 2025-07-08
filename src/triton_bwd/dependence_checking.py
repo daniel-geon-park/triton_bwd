@@ -56,6 +56,10 @@ def prove_independence(
     nest_s: List["ForLoop"],
     nest_t: List["ForLoop"],
 ):
+    """Returns `True` if it can be proven that there is no dependence at level u.
+    If there is a dependence, or if the lack of dependence cannot be proven, then returns `False`.
+    """
+
     lhs = 0
     coeffs = set()
     free_vars = []
@@ -107,19 +111,11 @@ def prove_independence(
     coeffs = list(coeffs)
 
     solver = z3.Solver()
-    sol_exists = z3.Exists(free_vars, z3.And(lhs == c0, *constraints))
-    if len(coeffs) > 0:
-        coeffs_constraints = []
-        for var in coeffs:
-            coeffs_constraints.append(var >= 16)  # FIXME: this is a hack
-        coeffs_constraints = z3.And(*coeffs_constraints)
-        solver.add(z3.ForAll(coeffs, z3.Or(sol_exists, z3.Not(coeffs_constraints))))
-    else:
-        solver.add(sol_exists)
+    solver.add(z3.And(lhs == c0, *constraints))
     solution = solver.check()
 
     if solution == z3.unsat:
-        return True
+        return True  # Independence is proven for all possible assignments of `coeff`.
 
     return False
 
