@@ -1,7 +1,9 @@
+import copy
 from typing import Dict, List, NewType, Optional, Tuple, Union
 
 import numpy as np
 import sympy
+from litellm import success_callback
 
 from triton_bwd.dependence_checking import dependence_level, get_mem_accesses
 from triton_bwd.sympy_utils import SympyShape
@@ -86,11 +88,17 @@ class ForLoop:
     def add_numbers(self):
         stmt_idx = 0
         decl_idx = 0
+
+        text = f"for {self.index_var} in range({self.index_begin}, {self.index_end}, {self.index_step}):"
         result = [
-            (
-                ("L", 0),
-                self,
-                f"for {self.index_var} in range({self.index_begin}, {self.index_end}, {self.index_step}):",
+            NumberedStmt(
+                kind="L",
+                num=0,
+                obj=self,
+                parent=None,
+                prev=None,
+                succ=None,
+                text=text,
             )
         ]
         loop_idx = 1
@@ -98,29 +106,58 @@ class ForLoop:
         for name, decl in self.declarations.items():
             shape = SympyShape(decl)
             if shape == ():
-                result.append((("D", decl_idx), decl, f"    let {name}: scalar"))
+                result.append(
+                    NumberedStmt(
+                        kind="D",
+                        num=decl_idx,
+                        obj=(name, decl),
+                        parent=self,
+                        prev=None,
+                        succ=None,
+                        text=f"    let {name}: scalar",
+                    )
+                )
             else:
                 result.append(
-                    (
-                        ("D", decl_idx),
-                        decl,
-                        f"    let {name}: array({', '.join(map(str, shape.args))})",
+                    NumberedStmt(
+                        kind="D",
+                        num=decl_idx,
+                        obj=(name, decl),
+                        parent=self,
+                        prev=None,
+                        succ=None,
+                        text=f"    let {name}: array({', '.join(map(str, shape.args))})",
                     )
                 )
             decl_idx += 1
 
-        for stmt in self.statements:
-            numbered_stmt = stmt.add_numbers()
-            for (kind, num), obj, text in numbered_stmt:
-                if kind == "S":
-                    result.append(((kind, stmt_idx), obj, "    " + text))
+        for idx in range(len(self.statements)):
+            stmt = self.statements[idx]
+            prev_stmt = self.statements[idx - 1].content if idx > 0 else None
+            succ_stmt = (
+                self.statements[idx + 1].content
+                if idx < len(self.statements) - 1
+                else None
+            )
+
+            numbered_stmts = stmt.add_numbers()
+            if len(numbered_stmts) > 0:
+                numbered_stmts[0].parent = self
+                numbered_stmts[0].prev = prev_stmt
+                numbered_stmts[0].succ = succ_stmt
+
+            for sub_stmt in numbered_stmts:
+                sub_stmt.text = "    " + sub_stmt.text
+                if sub_stmt.kind == "S":
+                    sub_stmt.num = stmt_idx
                     stmt_idx += 1
-                elif kind == "L":
-                    result.append(((kind, loop_idx), obj, "    " + text))
+                elif sub_stmt.kind == "L":
+                    sub_stmt.num = loop_idx
                     loop_idx += 1
-                elif kind == "D":
-                    result.append(((kind, decl_idx), obj, "    " + text))
+                elif sub_stmt.kind == "D":
+                    sub_stmt.num = decl_idx
                     decl_idx += 1
+                result.append(sub_stmt)
 
         return result
 
@@ -135,6 +172,12 @@ class ForLoop:
                 return new_r, loop_idx, stmt_idx
         return None, loop_idx, stmt_idx
 
+    def rename_index_var(self, new_name: str):
+        """Renames the index variable of the loop."""
+        self.index_var = sympy.Symbol(new_name, integer=True)
+        # TODO: check for conflicts with existing variable names in the loop
+        # TODO: rename all occurrences of the index variable in the loop's statements
+
 
 class Assignment:
     def __init__(self, target: sympy.Basic, value: sympy.Basic):
@@ -145,12 +188,49 @@ class Assignment:
         return f"{self.target} = {self.value}"
 
     def add_numbers(self):
-        return [(("S", 0), self, repr(self))]
+        return [
+            NumberedStmt(
+                kind="S",
+                num=0,
+                obj=self,
+                parent=None,
+                prev=None,
+                succ=None,
+                text=repr(self),
+            )
+        ]
 
     def get_stmt_impl(self, i: int, loop_idx: int, stmt_idx: int):
         if i == stmt_idx:
             return (self, [], []), loop_idx, stmt_idx + 1
         return None, loop_idx, stmt_idx + 1
+
+
+Decl = Tuple[str, sympy.Basic]
+Stmt = Union[ForLoop, Decl, Assignment]
+
+
+class NumberedStmt:
+    def __init__(
+        self,
+        kind: str,
+        num: int,
+        obj: Stmt,
+        parent: Optional[ForLoop],
+        prev: Optional[Stmt],
+        succ: Optional[Stmt],
+        text: str,
+    ):
+        self.kind = kind
+        self.num = num
+        self.obj = obj
+        self.parent = parent
+        self.prev = prev
+        self.succ = succ
+        self.text = text
+
+    def __repr__(self):
+        return f"{f'{self.kind}{self.num}':>5}: {self.text}"
 
 
 class AbstractNode:
@@ -169,7 +249,7 @@ class AbstractNode:
     def numbered_repr(self):
         numbered = self.add_numbers()
         return "\n".join(
-            f"{f'{kind}{num}':>5}: {text}" for ((kind, num), _, text) in numbered
+            f"{f'{stmt.kind}{stmt.num}':>5}: {stmt.text}" for stmt in numbered
         )
 
     def get_stmt_impl(self, i: int, loop_idx: int, stmt_idx: int):
@@ -209,3 +289,51 @@ class AbstractNode:
                     if u is not None:
                         dependencies.append(("outp", u, name_s))
         return dependencies
+
+    def fuse_loop(self, loop_idx_a: int, loop_idx_b: int):
+        """Fuses two consecutive loops."""
+        new_tree = copy.deepcopy(self)  # Ensure we don't modify the original tree
+
+        numbered = new_tree.add_numbers()
+        loop_a = loop_b = None
+        for stmt in numbered:
+            if stmt.kind == "L" and stmt.num == loop_idx_a:
+                loop_a = stmt
+            elif stmt.kind == "L" and stmt.num == loop_idx_b:
+                loop_b = stmt
+
+        if loop_a is None or loop_b is None:
+            raise ValueError(f"Invalid loop indices")
+
+        if loop_a.succ is not loop_b.obj:
+            raise ValueError(f"Loops {loop_idx_a} and {loop_idx_b} are not consecutive")
+
+        loop_a, loop_b = loop_a.obj, loop_b.obj
+        loop_b.rename_index_var(loop_a.index_var.name)
+
+        if loop_a.index_begin != loop_b.index_begin:
+            raise ValueError(
+                f"Loops {loop_idx_a} and {loop_idx_b} have different start indices"
+            )
+        if loop_a.index_end != loop_b.index_end:
+            raise ValueError(
+                f"Loops {loop_idx_a} and {loop_idx_b} have different end indices"
+            )
+        if loop_a.index_step != loop_b.index_step:
+            raise ValueError(
+                f"Loops {loop_idx_a} and {loop_idx_b} have different step sizes"
+            )
+
+        # Fuse the loops
+        new_declarations = {**loop_a.declarations, **loop_b.declarations}
+        new_statements = loop_a.statements + loop_b.statements
+        new_loop = ForLoop(
+            index_var=loop_a.index_var,
+            index_begin=loop_a.index_begin,
+            index_end=loop_a.index_end,
+            index_step=loop_a.index_step,
+            declarations=new_declarations,
+            statements=new_statements,
+        )
+
+        print(new_loop)

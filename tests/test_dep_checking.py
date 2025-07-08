@@ -78,3 +78,62 @@ def test_book_example():
         ((1, 2), ("flow", 1, "c")),
         ((2, 3), ("flow", 2, "a")),
     }
+
+
+@optimize(
+    {
+        "a": ArraySpec(dtype="float32", dims=("N", "K")),
+        "b": ArraySpec(dtype="float32", dims=("K", "M")),
+        "c": ArraySpec(dtype="float32", dims=("N", "M")),
+        "d": ArraySpec(dtype="float32", dims=("N", "M")),
+    }
+)
+def example1(
+    a: InArray,
+    b: InArray,
+    c: OutArray,
+    d: OutArray,
+    N: int,
+    K: int,
+    M: int,
+):
+    for i in range(N):
+        for j in range(M):
+            for k in range(K):
+                c[i, j] += a[i, k] * b[k, j]
+            for k in range(K):
+                d[i, j] += a[i, k] * b[k, j]
+
+
+@optimize(
+    {
+        "a": ArraySpec(dtype="float32", dims=("N", "K")),
+        "b": ArraySpec(dtype="float32", dims=("K", "M")),
+        "c": ArraySpec(dtype="float32", dims=("N", "M")),
+    }
+)
+def example2(
+    a: InArray,
+    b: InArray,
+    c: OutArray,
+    N: int,
+    K: int,
+    M: int,
+):
+    for i in range(N):
+        for j in range(M):
+            for k in range(K):
+                a[i, k] += a[i, k] * b[k, j]
+            for k in range(K):
+                c[i, j] += a[i, k] * b[k, j]
+
+
+def test_example1():
+    print(example1.abstract_tree.numbered_repr())
+    print(example1.abstract_tree.find_dependence(0, 1))
+    print(example1.abstract_tree.find_dependence(1, 0))
+    example1.abstract_tree.fuse_loop(3, 4)
+
+    print(example2.abstract_tree.numbered_repr())
+    print(example2.abstract_tree.find_dependence(0, 1))
+    print(example2.abstract_tree.find_dependence(1, 0))
