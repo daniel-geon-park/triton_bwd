@@ -1,4 +1,6 @@
 import ast
+import inspect
+import math
 import re
 from typing import Any, Dict, List, Union
 
@@ -6,6 +8,7 @@ import sympy
 
 from triton_bwd.abtract_tree import AbstractNode, Assignment, ForLoop
 from triton_bwd.constexpr import Constexpr
+from triton_bwd.optimize_lang import Array, ArraySpec
 from triton_bwd.sympy_utils import SympyIndexing, SympyShape
 
 
@@ -21,6 +24,7 @@ class NodeVisitor(ast.NodeVisitor):
         self.func_globals = func_globals
         self.args = args
         self.locals = {}
+        self._tmp_counter = 0
 
     def set_local(self, name, value):
         self.locals[name] = value
@@ -28,12 +32,6 @@ class NodeVisitor(ast.NodeVisitor):
     def visit(self, node: Any):
         try:
             value = super().visit(node)
-            if isinstance(node, ast.expr):
-                if not isinstance(value, sympy.Basic):
-                    raise ValueError(
-                        f"Expression {node} must return a sympy type, "
-                        f"but got {type(value)}: {value}"
-                    )
         except (ValueError, NotImplementedError) as e:
             print(f"{self.call_stack[-1]}:{getattr(node, 'lineno', None)}: {type(e)}")
             raise e
@@ -45,10 +43,21 @@ class NodeVisitor(ast.NodeVisitor):
         return self.visit(node.body[0])
 
     def visit_FunctionDef(self, node) -> AbstractNode:
-        nodes = self.visit_compound_statement(node.body)
+        scope = self.scope(extra_locals={})
+        statements = scope.visit_compound_statement(node.body)
+
+        declarations = {}
+        for name, target in scope.locals.items():
+            declarations[name] = target
+
         loop_var = sympy.symbols("__root_index", integer=True)
         return ForLoop(
-            loop_var, sympy.Number(0), sympy.Number(1), sympy.Number(1), {}, nodes
+            index_var=loop_var,
+            index_begin=sympy.Number(0),
+            index_end=sympy.Number(1),
+            index_step=sympy.Number(1),
+            declarations=declarations,
+            statements=statements,
         )
 
     def visit_Return(self, node):
@@ -61,26 +70,36 @@ class NodeVisitor(ast.NodeVisitor):
         if len(node.targets) != 1:
             raise ValueError("Only single assignment is supported.")
         value = self.visit(node.value)
-        value_shape = SympyShape(value)
         target_node = node.targets[0]
-        if isinstance(target_node, ast.Name):
-            if value_shape.args == ():
-                target = sympy.symbols(target_node.id)
+        if all_sympy(value):
+            value_shape = SympyShape(value)
+            if isinstance(target_node, ast.Name):
+                if value_shape.args == ():
+                    target = sympy.symbols(target_node.id)
+                else:
+                    target = sympy.IndexedBase(
+                        target_node.id,
+                        shape=value_shape.args,
+                    )
+                if target_node.id not in self.locals:
+                    self.set_local(target_node.id, target)
             else:
-                target = sympy.IndexedBase(
-                    target_node.id,
-                    shape=value_shape.args,
-                )
-            if target_node.id not in self.locals:
-                self.set_local(target_node.id, target)
+                target = self.visit(target_node)
+            if isinstance(value, (sympy.Symbol, sympy.IndexedBase)):
+                if value.name.startswith("__tmp"):
+                    return None
+            return Assignment(target, value)
         else:
-            target = self.visit(target_node)
-        return Assignment(target, value)
+            raise ValueError("Constexpr assignment not supported yet.")
 
     def visit_AugAssign(self, node):
         target = self.visit(node.target)
-        target_shape = SympyShape(target)
         value = self.visit(node.value)
+        if not all_sympy(target, value):
+            raise ValueError(
+                "Augmented assignment requires both target and value to be dynamic expressions."
+            )
+        target_shape = SympyShape(target)
         value_shape = SympyShape(value)
         if target_shape.args != value_shape.args:
             raise ValueError(
@@ -130,6 +149,9 @@ class NodeVisitor(ast.NodeVisitor):
         else:
             raise ValueError(f"Too many arguments for range")
 
+        if not all_sympy(begin, end, step):
+            raise ValueError("For loop range arguments must be dynamic expressions.")
+
         loop_var_name = node.target.id
 
         if loop_var_name in self.locals:
@@ -154,7 +176,8 @@ class NodeVisitor(ast.NodeVisitor):
         nodes = []
         for stmt in stmts:
             tree = self.visit(stmt)
-            nodes.append(tree)
+            if tree is not None:
+                nodes.append(tree)
 
         return nodes
 
@@ -208,9 +231,13 @@ class NodeVisitor(ast.NodeVisitor):
         left = self.visit(node.values[0])
         right = self.visit(node.values[1])
         if isinstance(node.op, ast.And):
+            if not all_sympy(left, right):
+                return left and right
             return left & right
         if isinstance(node.op, ast.Or):
-            return left & right
+            if not all_sympy(left, right):
+                return left or right
+            return left | right
 
     def visit_NamedExpr(self, node):
         raise NotImplementedError
@@ -228,9 +255,13 @@ class NodeVisitor(ast.NodeVisitor):
         if isinstance(node.op, ast.USub):
             return -x
         if isinstance(node.op, ast.Not):
-            return sympy.Not(x)
+            if all_sympy(x):
+                return sympy.Not(x)
+            return not x
         if isinstance(node.op, ast.Invert):
-            return sympy.Not(x)
+            if all_sympy(x):
+                return sympy.Not(x)
+            return ~x
 
     def visit_Lambda(self, node):
         raise NotImplementedError
@@ -272,6 +303,24 @@ class NodeVisitor(ast.NodeVisitor):
         return _apply_binary_method(node.ops[0], lhs, rhs)
 
     def visit_Call(self, node):
+        func = self.visit(node.func)
+        args = [self.visit(arg) for arg in node.args]
+        kwargs = {kw.arg: self.visit(kw.value) for kw in node.keywords}
+
+        if func is Array:
+            named_args = full_arg_dict(func, args, kwargs)
+            dtype, dims = named_args["dtype"], named_args["dims"]
+            spec = ArraySpec(dtype, dims)
+            spec.name = self.next_tmp_name()
+            return spec.symbol()
+
+        elif func is math.exp:
+            if len(args) != 1:
+                raise ValueError("math.exp requires exactly one argument.")
+            if not all_sympy(args[0]):
+                return math.exp(args[0])
+            return sympy.exp(args[0])
+
         raise NotImplementedError
 
     def visit_FormattedValue(self, node):
@@ -285,17 +334,22 @@ class NodeVisitor(ast.NodeVisitor):
             return sympy.Number(node.value)
         if isinstance(node.value, bool):
             return sympy.true if node.value else sympy.false
-        raise ValueError(
-            f"Unsupported constant type: {type(node.value)} with value {node.value}"
-        )
+        return node.value
 
     def visit_Attribute(self, node):
-        raise NotImplementedError
+        lhs = self.visit(node.value)
+        if all_sympy(lhs):
+            raise ValueError(
+                "Attribute access on dynamic expressions is not supported."
+            )
+        return getattr(lhs, node.attr)
 
     def visit_Subscript(self, node):
         value = self.visit(node.value)
         index = self.visit(node.slice)
-        return SympyIndexing(value, index)
+        if all_sympy(value, index):
+            return SympyIndexing(value, index)
+        return value[index]
 
     def visit_Starred(self, node):
         raise NotImplementedError
@@ -308,7 +362,9 @@ class NodeVisitor(ast.NodeVisitor):
 
     def visit_Tuple(self, node):
         args = [self.visit(x) for x in node.elts]
-        return sympy.Tuple(*args)
+        if all_sympy(*args):
+            return sympy.Tuple(*args)
+        return tuple(args)
 
     def visit_Slice(self, node):
         lower = self.visit(node.lower) if node.lower is not None else None
@@ -316,7 +372,7 @@ class NodeVisitor(ast.NodeVisitor):
         step = self.visit(node.step) if node.step is not None else None
         return slice(lower, upper, step)
 
-    def dereference_name(self, name, absent=None) -> sympy.Basic:
+    def dereference_name(self, name, absent=None) -> Any:
         error_if_absent = False
         if absent is None:
             error_if_absent = True
@@ -331,6 +387,18 @@ class NodeVisitor(ast.NodeVisitor):
         if error_if_absent and val is absent:
             raise ValueError(f"Name {name} not found in globals or args")
         return val
+
+    def next_tmp_name(self) -> str:
+        name = f"__tmp{self._tmp_counter}"
+        self._tmp_counter += 1
+        return name
+
+
+def full_arg_dict(fn, args, kwargs):
+    sig = inspect.signature(fn)
+    bound_args = sig.bind(*args, **kwargs)
+    bound_args.apply_defaults()
+    return bound_args.arguments
 
 
 builtin_namespace = {
@@ -371,3 +439,8 @@ def _apply_binary_method(op, lhs, rhs):
     if isinstance(rhs, sympy.Basic):
         return getattr(rhs, rev_op_name)(lhs)
     return getattr(Constexpr(lhs), op_name)(Constexpr(rhs)).value
+
+
+def all_sympy(*args):
+    """Check if all arguments are sympy expressions."""
+    return all(isinstance(arg, sympy.Basic) for arg in args)

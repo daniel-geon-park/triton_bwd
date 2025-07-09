@@ -1,4 +1,13 @@
-from triton_bwd.optimize import ArraySpec, InArray, InOutArray, OutArray, optimize
+import math
+
+from triton_bwd.optimize import (
+    Array,
+    ArraySpec,
+    InArray,
+    InOutArray,
+    OutArray,
+    optimize,
+)
 
 
 @optimize(
@@ -164,3 +173,61 @@ def test_fuse_loop():
         print(f"Expected error: {e}")
     else:
         raise AssertionError("Expected a ValueError due to non-fusible loops.")
+
+
+@optimize(
+    {
+        "q": ArraySpec(dtype="float32", dims=("B", "H", "T_Q", "D")),
+        "k": ArraySpec(dtype="float32", dims=("B", "H", "T_KV", "D")),
+        "v": ArraySpec(dtype="float32", dims=("B", "H", "T_KV", "D")),
+        "o": ArraySpec(dtype="float32", dims=("B", "H", "T_Q", "D")),
+    }
+)
+def attention(
+    q: InArray,
+    k: InArray,
+    v: InArray,
+    o: OutArray,
+    B: int,
+    H: int,
+    T_Q: int,
+    T_KV: int,
+    D: int,
+):
+    l = Array(dtype="float32", dims=("B", "H", "T_Q"))
+    for b in range(B):
+        for h in range(H):
+            for iq in range(T_Q):
+                l[b, h, iq] = 0.0
+                for d in range(D):
+                    o[b, h, iq, d] = 0.0
+    scores = Array(dtype="float32", dims=("B", "H", "T_Q", "T_KV"))
+    for b in range(B):
+        for h in range(H):
+            for iq in range(T_Q):
+                for ik in range(T_KV):
+                    s = 0
+                    for d in range(D):
+                        s += q[b, h, iq, d] * k[b, h, ik, d]
+                    scores[b, h, iq, ik] = s
+    for b in range(B):
+        for h in range(H):
+            for iq in range(T_Q):
+                for ik in range(T_KV):
+                    l[b, h, iq] += math.exp(scores[b, h, iq, ik])
+    probs = Array(dtype="float32", dims=("B", "H", "T_Q", "T_KV"))
+    for b in range(B):
+        for h in range(H):
+            for iq in range(T_Q):
+                for ik in range(T_KV):
+                    probs[iq, ik] = math.exp(scores[b, h, iq, ik]) / l[b, h, iq]
+    for b in range(B):
+        for h in range(H):
+            for iq in range(T_Q):
+                for ik in range(T_KV):
+                    for d in range(D):
+                        o[b, h, iq, d] += probs[b, h, iq, ik] * v[b, h, ik, d]
+
+
+def test_optimize_attention():
+    print(attention.abstract_tree.numbered_repr())

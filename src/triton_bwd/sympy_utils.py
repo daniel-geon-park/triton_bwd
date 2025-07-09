@@ -1,5 +1,3 @@
-from typing import Union
-
 import sympy
 
 
@@ -43,11 +41,13 @@ class SympyShape(sympy.Function):
             return sympy.Tuple()  # scalar
         if isinstance(array, sympy.IndexedBase):
             return array.shape
-        if isinstance(array, Union[sympy.Add, sympy.Mul]):
-            a, b = array.as_two_terms()
-            a_shape, b_shape = SympyShape(a), SympyShape(b)
-            shape = broadcasat_shapes(a_shape, b_shape)
-            return sympy.Tuple(*shape)
+        if isinstance(array, (sympy.Add, sympy.Mul, sympy.exp, sympy.Pow)):
+            # Elementwise operations on arrays
+            shapes = [SympyShape(arg) for arg in array.args]
+            shape = shapes[0]
+            for other_shape in shapes[1:]:
+                shape = broadcasat_shapes(shape, other_shape)
+            return shape
         if isinstance(array, SympyIndexing):
             # TODO: handle slices and other indexing
             return sympy.Tuple()
