@@ -1,11 +1,10 @@
-from typing import TYPE_CHECKING, List, Tuple
+from typing import TYPE_CHECKING, List
 
 import sympy
 import z3
 from sympy.solvers.solveset import linear_coeffs
 
 from triton_bwd.sympy_to_z3 import sympy_to_z3
-from triton_bwd.sympy_utils import SympyIndexing, SympyShape
 
 if TYPE_CHECKING:
     from triton_bwd.abtract_tree import ForLoop
@@ -13,6 +12,7 @@ if TYPE_CHECKING:
 
 def dependence_levels(
     s_before_t: bool,
+    min_level: int,
     index_s: sympy.Basic,
     nest_s: List["ForLoop"],
     index_t: sympy.Basic,
@@ -31,7 +31,7 @@ def dependence_levels(
             break
 
     dep_levels = []
-    for u in range(num_common_loops + (1 if s_before_t else 0)):
+    for u in range(min_level, num_common_loops + (1 if s_before_t else 0)):
         indep_proven = prove_independence(
             u,
             num_common_loops,
@@ -121,23 +121,3 @@ def prove_independence(
         return True  # Independence is proven for all possible assignments of `coeff`.
 
     return False
-
-
-def get_mem_accesses(expr: sympy.Basic) -> List[Tuple[str, sympy.Basic]]:
-    if isinstance(expr, sympy.Symbol):
-        return [(expr.name, sympy.Number(0))]
-    if isinstance(expr, SympyIndexing):
-        array, index = expr.args
-        if not isinstance(index, sympy.Tuple):
-            index = sympy.Tuple(index)
-        assert isinstance(array, sympy.IndexedBase)
-        flat_index = sympy.Number(0)
-        shape = SympyShape(array)
-        for dim, idx in zip(shape.args, index.args):
-            flat_index = flat_index * dim + idx
-        return [(array.name, flat_index)]
-
-    results = []
-    for arg in expr.args:
-        results.extend(get_mem_accesses(arg))
-    return results

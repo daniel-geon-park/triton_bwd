@@ -220,7 +220,7 @@ def attention(
         for h in range(H):
             for iq in range(T_Q):
                 for ik in range(T_KV):
-                    probs[iq, ik] = math.exp(scores[b, h, iq, ik]) / l[b, h, iq]
+                    probs[b, h, iq, ik] = math.exp(scores[b, h, iq, ik]) / l[b, h, iq]
     for b in range(B):
         for h in range(H):
             for iq in range(T_Q):
@@ -230,4 +230,24 @@ def attention(
 
 
 def test_optimize_attention():
-    print(attention.abstract_tree.numbered_repr())
+    tree = attention.abstract_tree
+    print(tree.numbered_repr())
+
+    tree = tree.fuse_loop(1, 5)
+    tree = tree.fuse_loop(2, 5)
+    tree = tree.fuse_loop(1, 8)
+    tree = tree.fuse_loop(2, 8)
+    tree = tree.fuse_loop(1, 10)
+    tree = tree.fuse_loop(2, 10)
+    tree = tree.fuse_loop(1, 12)
+    tree = tree.fuse_loop(2, 12)
+    tree = tree.fuse_loop(3, 5)
+    tree = tree.fuse_loop(3, 7)
+    tree = tree.fuse_loop(8, 10)
+    tree = tree.fuse_loop(9, 10)
+    tree = tree.fuse_loop(8, 3)
+    tree = tree.fuse_loop(5, 7)
+    print("\nAfter fuse_loop:")
+    print(tree.numbered_repr())
+
+    print(tree.find_stmt_dependence(("L", 2), ("L", 2)))

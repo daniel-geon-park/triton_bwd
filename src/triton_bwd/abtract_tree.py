@@ -4,8 +4,45 @@ from typing import Dict, List, Optional, Set, Tuple, Union
 
 import sympy
 
-from triton_bwd.dependence_checking import dependence_levels, get_mem_accesses
-from triton_bwd.sympy_utils import SympyShape
+from triton_bwd.dependence_checking import dependence_levels
+from triton_bwd.sympy_utils import SympyIndexing, SympyShape
+
+
+def get_mem_accesses(
+    expr: sympy.Basic,
+    loop_nest: List["NumberedStmt"],
+) -> List[Tuple[str, Optional["NumberedStmt"], sympy.Basic]]:
+
+    if isinstance(expr, sympy.Symbol):
+        decl_loop = None
+        for loop in loop_nest[::-1]:
+            if expr.name in loop.obj.declarations:
+                decl_loop = loop
+                break
+        return [(expr.name, decl_loop, sympy.Number(0))]
+
+    if isinstance(expr, SympyIndexing):
+        array, index = expr.args
+        if not isinstance(index, sympy.Tuple):
+            index = sympy.Tuple(index)
+        assert isinstance(array, sympy.IndexedBase)
+        flat_index = sympy.Number(0)
+        shape = SympyShape(array)
+        for dim, idx in zip(shape.args, index.args):
+            flat_index = flat_index * dim + idx
+
+        decl_loop = None
+        for loop in loop_nest[::-1]:
+            if array.name in loop.obj.declarations:
+                decl_loop = loop
+                break
+
+        return [(array.name, decl_loop, flat_index)]
+
+    results = []
+    for arg in expr.args:
+        results.extend(get_mem_accesses(arg, loop_nest))
+    return results
 
 
 class AbstractNode(abc.ABC):
@@ -24,7 +61,7 @@ class AbstractNode(abc.ABC):
     def numbered_repr(self) -> str:
         numbered = self.add_numbers()
         return "\n".join(
-            f"{f'{stmt.kind}{stmt.num}/{stmt.level}':>5}: {stmt.text}"
+            f"{f'{stmt.kind}{stmt.num}/{stmt.level}':>6}: {stmt.text}"
             for stmt in numbered
         )
 
@@ -38,63 +75,80 @@ class AbstractNode(abc.ABC):
 
     def find_dependence(self, i: int, j: int) -> Set[Tuple[str, int, str]]:
         """Finds dependencies between two assignments."""
-        S, nest_S, nest_idx_S = self.get_asgn(i)
-        T, nest_T, nest_idx_T = self.get_asgn(j)
-        S_stores = get_mem_accesses(S.target)
-        S_loads = get_mem_accesses(S.value)
-        T_stores = get_mem_accesses(T.target)
-        T_loads = get_mem_accesses(T.value)
+        numbered = self.add_numbers()
+
+        S = T = None
+        for stmt in numbered:
+            if (stmt.kind, stmt.num) == ("A", i):
+                S = stmt
+            if (stmt.kind, stmt.num) == ("A", j):
+                T = stmt
+
+        nest_S, nest_T = [S.parent], [T.parent]
+        while nest_S[0].parent is not None:
+            nest_S.insert(0, nest_S[0].parent)
+        while nest_T[0].parent is not None:
+            nest_T.insert(0, nest_T[0].parent)
+
+        S_stores = get_mem_accesses(S.obj.target, nest_S)
+        S_loads = get_mem_accesses(S.obj.value, nest_S)
+        T_stores = get_mem_accesses(T.obj.target, nest_T)
+        T_loads = get_mem_accesses(T.obj.value, nest_T)
+
+        nest_S = [stmt.obj for stmt in nest_S]
+        nest_T = [stmt.obj for stmt in nest_T]
+
         dependencies = set()
+
+        def add_deps(dep_kind: str, S_vars, T_vars):
+            for name_s, decl_s, index_s in S_vars:
+                for name_t, decl_t, index_t in T_vars:
+                    if (name_s, decl_s) == (name_t, decl_t):
+                        min_level = 0
+                        if decl_s is not None:
+                            min_level = decl_s.level + 1
+                        dep_levels = dependence_levels(
+                            s_before_t=i < j,
+                            min_level=min_level,
+                            index_s=index_s,
+                            nest_s=nest_S,
+                            index_t=index_t,
+                            nest_t=nest_T,
+                        )
+                        for u in dep_levels:
+                            dependencies.add((dep_kind, u, name_s))
+
         # Flow dependencies
-        for name_s, index_s in S_stores:
-            for name_t, index_t in T_loads:
-                if name_s == name_t:
-                    dep_levels = dependence_levels(
-                        i < j, index_s, nest_S, index_t, nest_T
-                    )
-                    for u in dep_levels:
-                        dependencies.add(("flow", u, name_s))
+        add_deps("flow", S_stores, T_loads)
         # Antidependencies
-        for name_s, index_s in S_loads:
-            for name_t, index_t in T_stores:
-                if name_s == name_t:
-                    dep_levels = dependence_levels(
-                        i < j, index_s, nest_S, index_t, nest_T
-                    )
-                    for u in dep_levels:
-                        dependencies.add(("anti", u, name_s))
+        add_deps("anti", S_loads, T_stores)
         # Output dependencies
-        for name_s, index_s in S_stores:
-            for name_t, index_t in T_stores:
-                if name_s == name_t:
-                    dep_levels = dependence_levels(
-                        i < j, index_s, nest_S, index_t, nest_T
-                    )
-                    for u in dep_levels:
-                        dependencies.add(("outp", u, name_s))
+        add_deps("outp", S_stores, T_stores)
+
         return dependencies
 
     def find_stmt_dependence(
         self,
-        a: "AbstractNode",
-        b: "AbstractNode",
+        a: Union["AbstractNode", Tuple[str, int]],
+        b: Union["AbstractNode", Tuple[str, int]],
     ) -> Set[Tuple[str, int, str]]:
         """Finds dependencies between two statements (loops or assignments)."""
-        assert isinstance(a, (ForLoop, Assignment)), "a must be a ForLoop or Assignment"
-        assert isinstance(b, (ForLoop, Assignment)), "b must be a ForLoop or Assignment"
-
         numbered = self.add_numbers()
         stmt_a = stmt_b = None
         a_idx = b_idx = None
+
         for idx, stmt in enumerate(numbered):
-            if stmt.obj is a:
+            if stmt.obj is a or (stmt.kind, stmt.num) == a:
                 stmt_a = stmt
                 a_idx = idx
-            if stmt.obj is b:
+            if stmt.obj is b or (stmt.kind, stmt.num) == b:
                 stmt_b = stmt
                 b_idx = idx
-        if stmt_a is None or stmt_b is None:
-            raise ValueError(f"Statements {a}, {b} not found in the tree")
+
+        if stmt_a is None:
+            raise ValueError(f"Statement {a} not found in the tree")
+        if stmt_b is None:
+            raise ValueError(f"Statement {b} not found in the tree")
 
         a_len = len(stmt_a.obj.add_numbers())
         b_len = len(stmt_b.obj.add_numbers())
@@ -115,8 +169,8 @@ class AbstractNode(abc.ABC):
 
     def find_stmt_block_dependence(
         self,
-        a: List["AbstractNode"],
-        b: List["AbstractNode"],
+        a: List[Union["AbstractNode", Tuple[str, int]]],
+        b: List[Union["AbstractNode", Tuple[str, int]]],
     ) -> Set[Tuple[str, int, str]]:
         """Finds dependencies between two blocks of statements."""
         dependencies = set()
@@ -126,9 +180,12 @@ class AbstractNode(abc.ABC):
                 dependencies.update(deps)
         return dependencies
 
-    def fuse_loop(self, loop_idx_a: int, loop_idx_b: int):
+    def fuse_loop(self, loop_idx_a: int, loop_idx_b: int) -> "AbstractNode":
         """Fuses two consecutive loops."""
         new_tree = copy.deepcopy(self)  # Ensure we don't modify the original tree
+
+        if loop_idx_b < loop_idx_a:
+            loop_idx_a, loop_idx_b = loop_idx_b, loop_idx_a
 
         numbered = new_tree.add_numbers()
         loop_a = loop_b = None
@@ -143,34 +200,40 @@ class AbstractNode(abc.ABC):
 
         if loop_a.succ is not loop_b.obj:
             raise ValueError(
-                f"Loops L{loop_idx_a} and L{loop_idx_b} are not consecutive"
+                f"Loops L{loop_idx_a} and L{loop_idx_b} are not consecutive:\n"
+                + self.numbered_repr()
             )
 
-        loop_level, parent_loop = loop_a.level, loop_a.parent
+        loop_level, parent_loop = loop_a.level, loop_a.parent.obj
 
         loop_a, loop_b = loop_a.obj, loop_b.obj
 
         if loop_a.index_var.name != loop_b.index_var.name:
             raise ValueError(
-                f"Loops L{loop_idx_a} and L{loop_idx_b} have different index variable names"
+                f"Loops L{loop_idx_a} and L{loop_idx_b} have different index variable names:\n"
+                + self.numbered_repr()
             )
         if loop_a.index_begin != loop_b.index_begin:
             raise ValueError(
-                f"Loops L{loop_idx_a} and L{loop_idx_b} have different start indices"
+                f"Loops L{loop_idx_a} and L{loop_idx_b} have different start indices:\n"
+                + self.numbered_repr()
             )
         if loop_a.index_end != loop_b.index_end:
             raise ValueError(
-                f"Loops L{loop_idx_a} and L{loop_idx_b} have different end indices"
+                f"Loops L{loop_idx_a} and L{loop_idx_b} have different end indices:\n"
+                + self.numbered_repr()
             )
         if loop_a.index_step != loop_b.index_step:
             raise ValueError(
-                f"Loops L{loop_idx_a} and L{loop_idx_b} have different step sizes"
+                f"Loops L{loop_idx_a} and L{loop_idx_b} have different step sizes:\n"
+                + self.numbered_repr()
             )
 
         # Check for clashing declarations
         if set(loop_a.declarations.keys()) & set(loop_b.declarations.keys()):
             raise ValueError(
-                f"Some declarations in Loops L{loop_idx_a} and L{loop_idx_b} clash"
+                f"Some declarations in Loops L{loop_idx_a} and L{loop_idx_b} clash:\n"
+                + self.numbered_repr()
             )
 
         # Fuse the loops
@@ -197,7 +260,8 @@ class AbstractNode(abc.ABC):
             if level == loop_level:
                 raise ValueError(
                     f"Fusing loops {loop_idx_a} and {loop_idx_b} introduces "
-                    f"a dependence at the same level {level} for variable {var_name}."
+                    f"a dependence at the same level {level} for variable `{var_name}`:\n"
+                    + self.numbered_repr()
                 )
 
         return new_tree
@@ -268,7 +332,7 @@ class ForLoop(AbstractNode):
                         num=decl_idx,
                         obj=(name, decl),
                         level=1,
-                        parent=self,
+                        parent=result[0],
                         prev=None,
                         succ=None,
                         text=f"    let {name}: scalar",
@@ -281,7 +345,7 @@ class ForLoop(AbstractNode):
                         num=decl_idx,
                         obj=(name, decl),
                         level=1,
-                        parent=self,
+                        parent=result[0],
                         prev=None,
                         succ=None,
                         text=f"    let {name}: array({', '.join(map(str, shape.args))})",
@@ -298,7 +362,7 @@ class ForLoop(AbstractNode):
 
             numbered_stmts = stmt.add_numbers()
             if len(numbered_stmts) > 0:
-                numbered_stmts[0].parent = self
+                numbered_stmts[0].parent = result[0]
                 numbered_stmts[0].prev = prev_stmt
                 numbered_stmts[0].succ = succ_stmt
 
@@ -375,7 +439,7 @@ class NumberedStmt:
         num: int,
         obj: Stmt,
         level: int,
-        parent: Optional[ForLoop],
+        parent: Optional["NumberedStmt"],
         prev: Optional[Stmt],
         succ: Optional[Stmt],
         text: str,
