@@ -111,7 +111,7 @@ def prove_independence(
     coeffs = list(coeffs)
 
     solver = z3.Solver()
-    solver.set("timeout", 5)
+    solver.set("timeout", 1000)  # milliseconds
     solver.add(z3.And(lhs == c0, *constraints))
     solution = solver.check()
 

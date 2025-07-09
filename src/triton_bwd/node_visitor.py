@@ -47,10 +47,8 @@ class NodeVisitor(ast.NodeVisitor):
     def visit_FunctionDef(self, node) -> AbstractNode:
         nodes = self.visit_compound_statement(node.body)
         loop_var = sympy.symbols("__root_index", integer=True)
-        return AbstractNode(
-            ForLoop(
-                loop_var, sympy.Number(0), sympy.Number(1), sympy.Number(1), {}, nodes
-            )
+        return ForLoop(
+            loop_var, sympy.Number(0), sympy.Number(1), sympy.Number(1), {}, nodes
         )
 
     def visit_Return(self, node):
@@ -146,9 +144,7 @@ class NodeVisitor(ast.NodeVisitor):
             if name != loop_var_name:
                 declarations[name] = target
 
-        return AbstractNode(
-            ForLoop(loop_var, begin, end, step, declarations, statements)
-        )
+        return ForLoop(loop_var, begin, end, step, declarations, statements)
 
     def visit_compound_statement(self, stmts) -> List[AbstractNode]:
         # Ensure that stmts is iterable

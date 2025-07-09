@@ -1,5 +1,4 @@
-from triton_bwd.abtract_tree import InOutArray
-from triton_bwd.optimize import ArraySpec, InArray, OutArray, optimize
+from triton_bwd.optimize import ArraySpec, InArray, InOutArray, OutArray, optimize
 
 
 @optimize(
@@ -25,7 +24,7 @@ def matrix_multiply(
 
 def test_matmul():
     print(matrix_multiply.abstract_tree.numbered_repr())
-    result = set(matrix_multiply.abstract_tree.find_dependence(0, 0))
+    result = matrix_multiply.abstract_tree.find_dependence(0, 0)
     assert result == {("flow", 3, "c"), ("anti", 3, "c"), ("outp", 3, "c")}
 
 
