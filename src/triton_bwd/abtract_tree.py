@@ -142,27 +142,36 @@ class AbstractNode(abc.ABC):
             raise ValueError(f"Invalid loop indices")
 
         if loop_a.succ is not loop_b.obj:
-            raise ValueError(f"Loops {loop_idx_a} and {loop_idx_b} are not consecutive")
+            raise ValueError(
+                f"Loops L{loop_idx_a} and L{loop_idx_b} are not consecutive"
+            )
 
         loop_level, parent_loop = loop_a.level, loop_a.parent
 
         loop_a, loop_b = loop_a.obj, loop_b.obj
-        loop_b.rename_index_var(loop_a.index_var.name)
 
+        if loop_a.index_var.name != loop_b.index_var.name:
+            raise ValueError(
+                f"Loops L{loop_idx_a} and L{loop_idx_b} have different index variable names"
+            )
         if loop_a.index_begin != loop_b.index_begin:
             raise ValueError(
-                f"Loops {loop_idx_a} and {loop_idx_b} have different start indices"
+                f"Loops L{loop_idx_a} and L{loop_idx_b} have different start indices"
             )
         if loop_a.index_end != loop_b.index_end:
             raise ValueError(
-                f"Loops {loop_idx_a} and {loop_idx_b} have different end indices"
+                f"Loops L{loop_idx_a} and L{loop_idx_b} have different end indices"
             )
         if loop_a.index_step != loop_b.index_step:
             raise ValueError(
-                f"Loops {loop_idx_a} and {loop_idx_b} have different step sizes"
+                f"Loops L{loop_idx_a} and L{loop_idx_b} have different step sizes"
             )
 
-        # TODO: check for overlapping declarations
+        # Check for clashing declarations
+        if set(loop_a.declarations.keys()) & set(loop_b.declarations.keys()):
+            raise ValueError(
+                f"Some declarations in Loops L{loop_idx_a} and L{loop_idx_b} clash"
+            )
 
         # Fuse the loops
         new_declarations = {**loop_a.declarations, **loop_b.declarations}
@@ -323,7 +332,7 @@ class ForLoop(AbstractNode):
     def rename_index_var(self, new_name: str):
         """Renames the index variable of the loop."""
         self.index_var = sympy.Symbol(new_name, integer=True)
-        # TODO: check for conflicts with existing variable names in the loop
+        # TODO: check for conflicts with existing declarations in the loop
         # TODO: rename all occurrences of the index variable in the loop's statements
 
 
