@@ -120,19 +120,47 @@ def example2(
     M: int,
 ):
     for i in range(N):
+        for k in range(K):
+            for j in range(M):
+                c[i, j] += a[i, k] * b[k, j]
+            for j in range(M):
+                c[i, j] = a[i, k] * b[k, j]
+
+
+@optimize(
+    {
+        "a": ArraySpec(dtype="float32", dims=("N", "K")),
+        "b": ArraySpec(dtype="float32", dims=("K", "M")),
+        "c": ArraySpec(dtype="float32", dims=("N", "M")),
+    }
+)
+def example3(
+    a: InArray,
+    b: InArray,
+    c: OutArray,
+    N: int,
+    K: int,
+    M: int,
+):
+    for i in range(N):
         for j in range(M):
             for k in range(K):
-                a[i, k] += a[i, k] * b[k, j]
+                c[i, j] += a[i, k] * b[k, j]
             for k in range(K):
                 c[i, j] += a[i, k] * b[k, j]
 
 
-def test_example1():
+def test_fuse_loop():
     print(example1.abstract_tree.numbered_repr())
-    print(example1.abstract_tree.find_dependence(0, 1))
-    print(example1.abstract_tree.find_dependence(1, 0))
-    example1.abstract_tree.fuse_loop(3, 4)
+    print("Fuse result:", example1.abstract_tree.fuse_loop(3, 4), sep="\n")
 
     print(example2.abstract_tree.numbered_repr())
-    print(example2.abstract_tree.find_dependence(0, 1))
-    print(example2.abstract_tree.find_dependence(1, 0))
+    print("Fuse result:", example2.abstract_tree.fuse_loop(3, 4), sep="\n")
+
+    print(example3.abstract_tree.numbered_repr())
+    try:
+        example3.abstract_tree.fuse_loop(3, 4)
+    except ValueError as e:
+        print(f"Expected error: {e}")
+    else:
+        raise AssertionError("Expected a ValueError due to non-fusible loops.")

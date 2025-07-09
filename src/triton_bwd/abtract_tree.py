@@ -4,7 +4,7 @@ from typing import Dict, List, Optional, Set, Tuple, Union
 
 import sympy
 
-from triton_bwd.dependence_checking import dependence_level, get_mem_accesses
+from triton_bwd.dependence_checking import dependence_levels, get_mem_accesses
 from triton_bwd.sympy_utils import SympyShape
 
 
@@ -13,18 +13,19 @@ class AbstractNode(abc.ABC):
         pass
 
     @abc.abstractmethod
-    def __repr__(self):
+    def __repr__(self) -> str:
         """Returns a string representation of the node."""
         pass
 
     @abc.abstractmethod
-    def add_numbers(self):
+    def add_numbers(self) -> List["NumberedStmt"]:
         pass
 
-    def numbered_repr(self):
+    def numbered_repr(self) -> str:
         numbered = self.add_numbers()
         return "\n".join(
-            f"{f'{stmt.kind}{stmt.num}':>5}: {stmt.text}" for stmt in numbered
+            f"{f'{stmt.kind}{stmt.num}/{stmt.level}':>5}: {stmt.text}"
+            for stmt in numbered
         )
 
     @abc.abstractmethod
@@ -48,22 +49,28 @@ class AbstractNode(abc.ABC):
         for name_s, index_s in S_stores:
             for name_t, index_t in T_loads:
                 if name_s == name_t:
-                    u = dependence_level(i < j, index_s, nest_S, index_t, nest_T)
-                    if u is not None:
+                    dep_levels = dependence_levels(
+                        i < j, index_s, nest_S, index_t, nest_T
+                    )
+                    for u in dep_levels:
                         dependencies.add(("flow", u, name_s))
         # Antidependencies
         for name_s, index_s in S_loads:
             for name_t, index_t in T_stores:
                 if name_s == name_t:
-                    u = dependence_level(i < j, index_s, nest_S, index_t, nest_T)
-                    if u is not None:
+                    dep_levels = dependence_levels(
+                        i < j, index_s, nest_S, index_t, nest_T
+                    )
+                    for u in dep_levels:
                         dependencies.add(("anti", u, name_s))
         # Output dependencies
         for name_s, index_s in S_stores:
             for name_t, index_t in T_stores:
                 if name_s == name_t:
-                    u = dependence_level(i < j, index_s, nest_S, index_t, nest_T)
-                    if u is not None:
+                    dep_levels = dependence_levels(
+                        i < j, index_s, nest_S, index_t, nest_T
+                    )
+                    for u in dep_levels:
                         dependencies.add(("outp", u, name_s))
         return dependencies
 
@@ -137,7 +144,8 @@ class AbstractNode(abc.ABC):
         if loop_a.succ is not loop_b.obj:
             raise ValueError(f"Loops {loop_idx_a} and {loop_idx_b} are not consecutive")
 
-        parent_loop = loop_a.parent
+        loop_level, parent_loop = loop_a.level, loop_a.parent
+
         loop_a, loop_b = loop_a.obj, loop_b.obj
         loop_b.rename_index_var(loop_a.index_var.name)
 
@@ -169,12 +177,21 @@ class AbstractNode(abc.ABC):
         )
 
         loop_a_idx = parent_loop.statements.index(loop_a)
-        loop_b_idx = parent_loop.statements.index(loop_b)
-        del parent_loop.statements[loop_b_idx]
-
         parent_loop.statements[loop_a_idx] = new_loop
+        parent_loop.statements.remove(loop_b)
 
-        print(new_loop)
+        new_deps = new_tree.find_stmt_block_dependence(
+            loop_b.statements,
+            loop_a.statements,
+        )
+        for dep_kind, level, var_name in new_deps:
+            if level == loop_level:
+                raise ValueError(
+                    f"Fusing loops {loop_idx_a} and {loop_idx_b} introduces "
+                    f"a dependence at the same level {level} for variable {var_name}."
+                )
+
+        return new_tree
 
 
 class ForLoop(AbstractNode):
@@ -224,6 +241,7 @@ class ForLoop(AbstractNode):
                 kind="L",
                 num=0,
                 obj=self,
+                level=0,
                 parent=None,
                 prev=None,
                 succ=None,
@@ -240,6 +258,7 @@ class ForLoop(AbstractNode):
                         kind="D",
                         num=decl_idx,
                         obj=(name, decl),
+                        level=1,
                         parent=self,
                         prev=None,
                         succ=None,
@@ -252,6 +271,7 @@ class ForLoop(AbstractNode):
                         kind="D",
                         num=decl_idx,
                         obj=(name, decl),
+                        level=1,
                         parent=self,
                         prev=None,
                         succ=None,
@@ -274,6 +294,7 @@ class ForLoop(AbstractNode):
                 numbered_stmts[0].succ = succ_stmt
 
             for sub_stmt in numbered_stmts:
+                sub_stmt.level += 1
                 sub_stmt.text = "    " + sub_stmt.text
                 if sub_stmt.kind == "A":
                     sub_stmt.num = asgn_idx
@@ -320,6 +341,7 @@ class Assignment:
                 kind="A",
                 num=0,
                 obj=self,
+                level=0,
                 parent=None,
                 prev=None,
                 succ=None,
@@ -343,6 +365,7 @@ class NumberedStmt:
         kind: str,
         num: int,
         obj: Stmt,
+        level: int,
         parent: Optional[ForLoop],
         prev: Optional[Stmt],
         succ: Optional[Stmt],
@@ -351,6 +374,7 @@ class NumberedStmt:
         self.kind = kind
         self.num = num
         self.obj = obj
+        self.level = level
         self.parent = parent
         self.prev = prev
         self.succ = succ

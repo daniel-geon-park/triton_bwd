@@ -11,7 +11,7 @@ if TYPE_CHECKING:
     from triton_bwd.abtract_tree import ForLoop
 
 
-def dependence_level(
+def dependence_levels(
     s_before_t: bool,
     index_s: sympy.Basic,
     nest_s: List["ForLoop"],
@@ -30,6 +30,7 @@ def dependence_level(
         else:
             break
 
+    dep_levels = []
     for u in range(num_common_loops + (1 if s_before_t else 0)):
         indep_proven = prove_independence(
             u,
@@ -42,8 +43,9 @@ def dependence_level(
             nest_t,
         )
         if not indep_proven:
-            return u
-    return None  # There is no dependence
+            dep_levels.append(u)
+
+    return dep_levels
 
 
 def prove_independence(
