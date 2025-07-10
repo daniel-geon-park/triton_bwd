@@ -228,6 +228,7 @@ def attention(
                 for ik in range(T_KV):
                     for d in range(D):
                         o[b, h, iq, d] += probs[b, h, iq, ik] * v[b, h, ik, d]
+    # l[0, 0, 0] = 1.0
 
 
 def test_optimize_attention():
@@ -251,4 +252,6 @@ def test_optimize_attention():
     print("\nAfter fuse_loop:")
     print(tree.numbered_repr())
 
-    print(tree.find_stmt_dependence(("L", 2), ("L", 2)))
+    tree = tree.localize_array_allocation(0, 1)
+    print("\nAfter localize_array_allocation:")
+    print(tree.numbered_repr())
