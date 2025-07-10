@@ -1,3 +1,4 @@
+import os
 import time
 from typing import TYPE_CHECKING, List
 
@@ -22,9 +23,6 @@ def dependence_levels(
     index_t: sympy.Basic,
     nest_t: List["ForLoop"],
 ):
-    """The statements cause a dependence at a depth `DEP`
-    if they cause a dependence at a level u >= DEP"""
-
     loop_indices_s = [loop_s.index_var for loop_s in nest_s]
     loop_indices_t = [loop_t.index_var for loop_t in nest_t]
     *ai, a0 = linear_coeffs(index_s, *loop_indices_s)
@@ -54,7 +52,8 @@ def dependence_levels(
     elapsed_time = time.time() - start_time
     global total_time
     total_time += elapsed_time
-    print(f"{elapsed_time:.4f} seconds / total {total_time:.4f} seconds")
+    if os.environ.get("OPTIMIZE_VERBOSE", "0") == "1":
+        print(f"{elapsed_time:.4f} seconds / total {total_time:.4f} seconds")
 
     return dep_levels
 
@@ -70,10 +69,7 @@ def prove_independence(
     nest_s: List["ForLoop"],
     nest_t: List["ForLoop"],
 ):
-    """Returns `True` if it can be proven that there is no dependence at level u.
-    If there is a dependence, or if the lack of dependence cannot be proven, then returns `False`.
-    """
-
+    """Returns the list of levels u such that the independence cannot be proven."""
     lhs = a0 - b0
     iks, jks = [], []
     constraints = []
