@@ -65,14 +65,6 @@ class AbstractNode(abc.ABC):
             for stmt in numbered
         )
 
-    @abc.abstractmethod
-    def get_asgn_impl(self, i: int, loop_idx: int, asgn_idx: int):
-        pass
-
-    def get_asgn(self, i: int) -> Tuple["Assignment", List["ForLoop"], List[int]]:
-        result, _, _ = self.get_asgn_impl(i, 0, 0)
-        return result
-
     def find_dependence(self, i: int, j: int) -> Set[Tuple[str, int, str]]:
         """Finds dependencies between two assignments."""
         numbered = self.add_numbers()
@@ -382,17 +374,6 @@ class ForLoop(AbstractNode):
 
         return result
 
-    def get_asgn_impl(self, i: int, loop_idx: int, asgn_idx: int):
-        my_loop_idx = loop_idx
-        loop_idx += 1
-        for stmt in self.statements:
-            r, loop_idx, asgn_idx = stmt.get_asgn_impl(i, loop_idx, asgn_idx)
-            if r is not None:
-                S, loop_nest, loop_idx_nest = r
-                new_r = (S, [self] + loop_nest, [my_loop_idx] + loop_idx_nest)
-                return new_r, loop_idx, asgn_idx
-        return None, loop_idx, asgn_idx
-
     def rename_index_var(self, new_name: str):
         """Renames the index variable of the loop."""
         self.index_var = sympy.Symbol(new_name, integer=True)
@@ -421,11 +402,6 @@ class Assignment:
                 text=repr(self),
             )
         ]
-
-    def get_asgn_impl(self, i: int, loop_idx: int, asgn_idx: int):
-        if i == asgn_idx:
-            return (self, [], []), loop_idx, asgn_idx + 1
-        return None, loop_idx, asgn_idx + 1
 
 
 Decl = Tuple[str, sympy.Basic]
