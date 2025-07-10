@@ -8,88 +8,6 @@ from triton_bwd.dependence_checking import dependence_levels
 from triton_bwd.sympy_utils import SympyIndexing, SympyShape
 
 
-class MemAccess:
-    def __init__(
-        self,
-        name: str,
-        decl_loop: Optional["NumberedStmt"],
-        index: sympy.Tuple,
-        flat_index: sympy.Basic,
-    ):
-        self.name = name
-        self.decl_loop = decl_loop
-        self.index = index
-        self.flat_index = flat_index
-
-
-def get_expr_mem_accesses(
-    expr: sympy.Basic,
-    loop_nest: List["NumberedStmt"],
-) -> List[MemAccess]:
-
-    if isinstance(expr, sympy.Symbol):
-        decl_loop = None
-        for loop in loop_nest[::-1]:
-            if expr.name in loop.obj.declarations:
-                decl_loop = loop
-                break
-
-        return [
-            MemAccess(
-                name=expr.name,
-                decl_loop=decl_loop,
-                index=sympy.Tuple(),
-                flat_index=sympy.Number(0),
-            )
-        ]
-
-    if isinstance(expr, SympyIndexing):
-        array, index = expr.args
-        if not isinstance(index, sympy.Tuple):
-            index = sympy.Tuple(index)
-        assert isinstance(array, sympy.IndexedBase)
-        flat_index = sympy.Number(0)
-        shape = SympyShape(array)
-        for dim, idx in zip(shape.args, index.args):
-            flat_index = flat_index * dim + idx
-
-        decl_loop = None
-        for loop in loop_nest[::-1]:
-            if array.name in loop.obj.declarations:
-                decl_loop = loop
-                break
-
-        return [
-            MemAccess(
-                name=array.name, decl_loop=decl_loop, index=index, flat_index=flat_index
-            )
-        ]
-
-    results = []
-    for arg in expr.args:
-        results.extend(get_expr_mem_accesses(arg, loop_nest))
-    return results
-
-
-def get_mem_accesses(stmt: "NumberedStmt") -> Tuple[List[MemAccess], List[MemAccess]]:
-    if stmt.kind == "A":
-        nest = [stmt.parent]
-        while nest[0].parent is not None:
-            nest.insert(0, nest[0].parent)
-
-        stores = get_expr_mem_accesses(stmt.obj.target, nest)
-        loads = get_expr_mem_accesses(stmt.obj.value, nest)
-        return stores, loads
-
-    elif stmt.kind == "L":
-        stores, loads = [], []
-        for child in stmt.children:
-            cur_stores, cur_loads = get_mem_accesses(child)
-            stores.extend(cur_stores)
-            loads.extend(cur_loads)
-        return stores, loads
-
-
 class AbstractNode(abc.ABC):
     def __init__(self):
         pass
@@ -578,3 +496,85 @@ class NumberedStmt:
 
     def __repr__(self):
         return f"{f'{self.kind}{self.num}':>5}: {self.text}"
+
+
+class MemAccess:
+    def __init__(
+        self,
+        name: str,
+        decl_loop: Optional["NumberedStmt"],
+        index: sympy.Tuple,
+        flat_index: sympy.Basic,
+    ):
+        self.name = name
+        self.decl_loop = decl_loop
+        self.index = index
+        self.flat_index = flat_index
+
+
+def get_expr_mem_accesses(
+    expr: sympy.Basic,
+    loop_nest: List["NumberedStmt"],
+) -> List[MemAccess]:
+
+    if isinstance(expr, sympy.Symbol):
+        decl_loop = None
+        for loop in loop_nest[::-1]:
+            if expr.name in loop.obj.declarations:
+                decl_loop = loop
+                break
+
+        return [
+            MemAccess(
+                name=expr.name,
+                decl_loop=decl_loop,
+                index=sympy.Tuple(),
+                flat_index=sympy.Number(0),
+            )
+        ]
+
+    if isinstance(expr, SympyIndexing):
+        array, index = expr.args
+        if not isinstance(index, sympy.Tuple):
+            index = sympy.Tuple(index)
+        assert isinstance(array, sympy.IndexedBase)
+        flat_index = sympy.Number(0)
+        shape = SympyShape(array)
+        for dim, idx in zip(shape.args, index.args):
+            flat_index = flat_index * dim + idx
+
+        decl_loop = None
+        for loop in loop_nest[::-1]:
+            if array.name in loop.obj.declarations:
+                decl_loop = loop
+                break
+
+        return [
+            MemAccess(
+                name=array.name, decl_loop=decl_loop, index=index, flat_index=flat_index
+            )
+        ]
+
+    results = []
+    for arg in expr.args:
+        results.extend(get_expr_mem_accesses(arg, loop_nest))
+    return results
+
+
+def get_mem_accesses(stmt: "NumberedStmt") -> Tuple[List[MemAccess], List[MemAccess]]:
+    if stmt.kind == "A":
+        nest = [stmt.parent]
+        while nest[0].parent is not None:
+            nest.insert(0, nest[0].parent)
+
+        stores = get_expr_mem_accesses(stmt.obj.target, nest)
+        loads = get_expr_mem_accesses(stmt.obj.value, nest)
+        return stores, loads
+
+    elif stmt.kind == "L":
+        stores, loads = [], []
+        for child in stmt.children:
+            cur_stores, cur_loads = get_mem_accesses(child)
+            stores.extend(cur_stores)
+            loads.extend(cur_loads)
+        return stores, loads
