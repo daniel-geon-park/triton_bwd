@@ -1,3 +1,4 @@
+import time
 from typing import TYPE_CHECKING, List
 
 import sympy
@@ -10,6 +11,9 @@ if TYPE_CHECKING:
     from triton_bwd.abtract_tree import ForLoop
 
 
+total_time = 0
+
+
 def dependence_levels(
     s_before_t: bool,
     min_level: int,
@@ -18,6 +22,9 @@ def dependence_levels(
     index_t: sympy.Basic,
     nest_t: List["ForLoop"],
 ):
+    """The statements cause a dependence at a depth `DEP`
+    if they cause a dependence at a level u >= DEP"""
+
     loop_indices_s = [loop_s.index_var for loop_s in nest_s]
     loop_indices_t = [loop_t.index_var for loop_t in nest_t]
     *ai, a0 = linear_coeffs(index_s, *loop_indices_s)
@@ -30,26 +37,31 @@ def dependence_levels(
         else:
             break
 
-    dep_levels = []
-    for u in range(min_level, num_common_loops + (1 if s_before_t else 0)):
-        indep_proven = prove_independence(
-            u,
-            num_common_loops,
-            ai,
-            a0,
-            bi,
-            b0,
-            nest_s,
-            nest_t,
-        )
-        if not indep_proven:
-            dep_levels.append(u)
+    start_time = time.time()
+
+    dep_levels = prove_independence(
+        u_lower=min_level,
+        u_upper=num_common_loops + (1 if s_before_t else 0) - 1,
+        num_common_loops=num_common_loops,
+        ai=ai,
+        a0=a0,
+        bi=bi,
+        b0=b0,
+        nest_s=nest_s,
+        nest_t=nest_t,
+    )
+
+    elapsed_time = time.time() - start_time
+    global total_time
+    total_time += elapsed_time
+    print(f"{elapsed_time:.4f} seconds / total {total_time:.4f} seconds")
 
     return dep_levels
 
 
 def prove_independence(
-    u: int,
+    u_lower: int,
+    u_upper: int,
     num_common_loops: int,
     ai: List[sympy.Expr],
     a0: sympy.Expr,
@@ -62,62 +74,69 @@ def prove_independence(
     If there is a dependence, or if the lack of dependence cannot be proven, then returns `False`.
     """
 
-    lhs = 0
-    coeffs = set()
-    free_vars = []
+    lhs = a0 - b0
+    iks, jks = [], []
     constraints = []
 
     for level in range(num_common_loops):
-        ik = z3.Int(f"__i{level}")
-        jk = z3.Int(f"__j{level}")
-        free_vars.extend([ik, jk])
-        ak_vars, ak = sympy_to_z3(ai[level])
-        bk_vars, bk = sympy_to_z3(bi[level])
+        ik = sympy.symbols(f"__i{level}", integer=True)
+        jk = sympy.symbols(f"__j{level}", integer=True)
+        iks.append(ik)
+        jks.append(jk)
+
+        ak = ai[level]
+        bk = bi[level]
         lhs = lhs + ak * ik - bk * jk
-        pk_vars, pk = sympy_to_z3(nest_s[level].index_begin)
-        qk_vars, qk = sympy_to_z3(nest_s[level].index_end - 1)
+
+        pk = nest_s[level].index_begin
+        qk = nest_s[level].index_end - 1
         constraints.extend([pk <= ik, ik <= qk])
         constraints.extend([pk <= jk, jk <= qk])
-        if level < u:  # s = 0
-            constraints.append(ik == jk)
-        elif level == u:  # s = 1
-            constraints.append(ik <= jk - 1)
-        for var in ak_vars + bk_vars + pk_vars + qk_vars:
-            coeffs.add(var)
 
     for level in range(num_common_loops, len(ai)):
-        ik = z3.Int(f"__i{level}")
-        free_vars.append(ik)
-        ak_vars, ak = sympy_to_z3(ai[level])
+        ik = sympy.symbols(f"__i{level}", integer=True)
+        iks.append(ik)
+
+        ak = ai[level]
         lhs = lhs + ak * ik
-        pk_vars, pk = sympy_to_z3(nest_s[level].index_begin)
-        qk_vars, qk = sympy_to_z3(nest_s[level].index_end - 1)
+
+        pk = nest_s[level].index_begin
+        qk = nest_s[level].index_end - 1
         constraints.extend([pk <= ik, ik <= qk])
-        for var in ak_vars + pk_vars + qk_vars:
-            coeffs.add(var)
 
     for level in range(num_common_loops, len(bi)):
-        jk = z3.Int(f"__j{level}")
-        free_vars.append(jk)
-        bk_vars, bk = sympy_to_z3(bi[level])
-        lhs = lhs - bk * jk
-        pk_vars, pk = sympy_to_z3(nest_t[level].index_begin)
-        qk_vars, qk = sympy_to_z3(nest_t[level].index_end - 1)
-        constraints.extend([pk <= jk, jk <= qk])
-        for var in bk_vars + pk_vars + qk_vars:
-            coeffs.add(var)
+        jk = sympy.symbols(f"__j{level}", integer=True)
+        jks.append(jk)
 
-    c0_vars, c0 = sympy_to_z3(b0 - a0)
-    for var in c0_vars:
-        coeffs.add(var)
-    coeffs = list(coeffs)
+        bk = bi[level]
+        lhs = lhs - bk * jk
+
+        pk = nest_t[level].index_begin
+        qk = nest_t[level].index_end - 1
+        constraints.extend([pk <= jk, jk <= qk])
+
+    u = sympy.symbols("__u", integer=True)
+    for level in range(num_common_loops):
+        ik, jk = iks[level], jks[level]
+        constraints.append(sympy.Implies(level <= u - 1, sympy.Eq(ik, jk)))  # s = 0
+        constraints.append(sympy.Implies(sympy.Eq(level, u), ik <= jk - 1))  # s = 1
+
+    lhs, _ = sympy_to_z3(lhs)
+    constraints = [sympy_to_z3(c)[0] for c in constraints]
+    u = sympy_to_z3(u)[0]
 
     solver = z3.Solver()
     solver.set("timeout", 1000)  # milliseconds
-    solver.add(z3.And(lhs == c0, *constraints))
-    solution = solver.check()
+    solver.add(z3.And(lhs == 0, *constraints))
 
-    if solution == z3.unsat:
-        return True  # Independence is proven for all possible assignments of `coeff`.
+    results = []
+    for u_test in range(u_lower, u_upper + 1):
+        solver.push()
+        solver.add(u == u_test)
+        solution = solver.check()
+        solver.pop()
 
-    return False
+        if solution != z3.unsat:  # possible dependence
+            results.append(u_test)
+
+    return results

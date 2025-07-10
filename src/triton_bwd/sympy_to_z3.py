@@ -1,9 +1,43 @@
+from typing import Union
+
+import sympy
+import z3
 from sympy.core import Add, Expr, Mul, Number, Pow, Symbol
+from sympy.core.relational import Relational
 from z3 import Int, Real, Sqrt
 
 
-def sympy_to_z3(sympy_exp: Expr):
+def sympy_to_z3(sympy_exp: Union[Expr, Relational]):
     """convert a sympy expression to a z3 expression. This returns (z3_vars, z3_expression)"""
+
+    if isinstance(sympy_exp, Relational):
+        left, left_vars = sympy_to_z3(sympy_exp.lhs)
+        right, right_vars = sympy_to_z3(sympy_exp.rhs)
+        var_list = list(set(left_vars) | set(right_vars))
+        if isinstance(sympy_exp, sympy.LessThan):
+            return left <= right, var_list
+        elif isinstance(sympy_exp, sympy.StrictLessThan):
+            return left < right, var_list
+        elif isinstance(sympy_exp, sympy.GreaterThan):
+            return left >= right, var_list
+        elif isinstance(sympy_exp, sympy.StrictGreaterThan):
+            return left > right, var_list
+        elif isinstance(sympy_exp, sympy.Equality):
+            return left == right, var_list
+        elif isinstance(sympy_exp, sympy.Unequality):
+            return left != right, var_list
+        else:
+            raise RuntimeError(
+                f"Unsupported relational expression type: {type(sympy_exp)}"
+            )
+    elif isinstance(sympy_exp, sympy.Implies):
+        left, left_vars = sympy_to_z3(sympy_exp.args[0])
+        right, right_vars = sympy_to_z3(sympy_exp.args[1])
+        var_list = list(set(left_vars) | set(right_vars))
+        return z3.Implies(left, right), var_list
+
+    elif isinstance(sympy_exp, (int, float, bool)):
+        return sympy_exp, []
 
     z3_vars = []
     z3_var_map = {}
@@ -21,7 +55,7 @@ def sympy_to_z3(sympy_exp: Expr):
 
     result_exp = _sympy_to_z3_rec(z3_var_map, sympy_exp)
 
-    return z3_vars, result_exp
+    return result_exp, z3_vars
 
 
 def _sympy_to_z3_rec(var_map, e):
