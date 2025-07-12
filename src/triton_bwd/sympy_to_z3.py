@@ -6,6 +6,8 @@ from sympy.core import Add, Expr, Mul, Number, Pow, Symbol
 from sympy.core.relational import Relational
 from z3 import Int, Real, Sqrt
 
+from triton_bwd.sympy_utils import SymbolicScalar
+
 
 def sympy_to_z3(sympy_exp: Union[Expr, Relational]):
     """convert a sympy expression to a z3 expression. This returns (z3_vars, z3_expression)"""
@@ -69,6 +71,9 @@ def _sympy_to_z3_rec(var_map, e):
         rv = var_map.get(e.name)
         if rv is None:
             raise RuntimeError("No var was corresponds to symbol '" + str(e) + "'")
+
+    elif isinstance(e, SymbolicScalar):
+        rv = _sympy_to_z3_rec(var_map, e.label)
 
     elif isinstance(e, Number):
         rv = int(e) if e.is_integer else float(e)

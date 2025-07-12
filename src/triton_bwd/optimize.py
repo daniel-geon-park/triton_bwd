@@ -1,9 +1,7 @@
 import ast
 import inspect
 from types import FunctionType
-from typing import Callable, NewType
-
-import numpy as np
+from typing import Callable
 
 from triton_bwd.abtract_tree import *
 from triton_bwd.node_visitor import NodeVisitor

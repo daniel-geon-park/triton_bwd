@@ -8,8 +8,16 @@ import sympy
 
 from triton_bwd.abtract_tree import AbstractNode, Assignment, Declaration, ForLoop
 from triton_bwd.constexpr import Constexpr
-from triton_bwd.optimize_lang import Array, ArraySpec
-from triton_bwd.sympy_utils import SympyIndexing, SympyShape
+from triton_bwd.optimize_lang import Array
+from triton_bwd.sympy_utils import (
+    TYPE_MAP,
+    UNKNOWN_TYPES,
+    SymbolicArray,
+    SymbolicScalar,
+    SympyDtype,
+    SympyIndexing,
+    SympyShape,
+)
 
 
 class NodeVisitor(ast.NodeVisitor):
@@ -74,21 +82,18 @@ class NodeVisitor(ast.NodeVisitor):
         target_node = node.targets[0]
         if all_sympy(value):
             value_shape = SympyShape(value)
+            value_dtype = SympyDtype(value)
             if isinstance(target_node, ast.Name):
                 if value_shape.args == ():
-                    target = sympy.symbols(target_node.id)
+                    target = SymbolicScalar(target_node.id, value_dtype)
                 else:
-                    target = sympy.IndexedBase(
-                        target_node.id,
-                        shape=value_shape.args,
-                    )
+                    target = SymbolicArray(target_node.id, value_dtype, value_shape)
                 if target_node.id not in self.locals:
                     self.set_local(target_node.id, target)
             else:
                 target = self.visit(target_node)
-            if isinstance(value, (sympy.Symbol, sympy.IndexedBase)):
-                if value.name.startswith("__tmp"):
-                    return None
+            if isinstance(value, SymbolicArray) and value.is_placeholder:
+                return None  # Don't create an assignment for placeholder arrays
             return Assignment(target, value)
         else:
             raise ValueError("Constexpr assignment not supported yet.")
@@ -111,7 +116,32 @@ class NodeVisitor(ast.NodeVisitor):
         return Assignment(target, result)
 
     def visit_AnnAssign(self, node):
-        raise NotImplementedError
+        if not node.simple:
+            raise ValueError("Annotated assignment must be simple.")
+        value = self.visit(node.value)
+        target_node = node.target
+        annotation = self.visit(node.annotation)
+        if annotation not in TYPE_MAP:
+            raise ValueError(f"Unsupported annotation: {annotation}")
+        annot_dtype = TYPE_MAP[annotation]
+        if all_sympy(value):
+            value_shape = SympyShape(value)
+            value_dtype = SympyDtype(value)
+            if value_dtype not in UNKNOWN_TYPES and annot_dtype != value_dtype:
+                raise ValueError(
+                    f"Annotated type {annot_dtype} does not match value type {value_dtype}."
+                )
+            if value_shape.args == ():
+                target = SymbolicScalar(target_node.id, annot_dtype)
+            else:
+                target = SymbolicArray(target_node.id, annot_dtype, value_shape)
+            if target_node.id not in self.locals:
+                self.set_local(target_node.id, target)
+            if isinstance(value, SymbolicArray) and value.is_placeholder:
+                return None  # Don't create an assignment for placeholder arrays
+            return Assignment(target, value)
+        else:
+            raise ValueError("Constexpr annotated assignment not supported yet.")
 
     def scope(self, extra_locals: Dict[str, sympy.Basic] = None):
         if extra_locals is None:
@@ -311,9 +341,7 @@ class NodeVisitor(ast.NodeVisitor):
         if func is Array:
             named_args = full_arg_dict(func, args, kwargs)
             dtype, dims = named_args["dtype"], named_args["dims"]
-            spec = ArraySpec(dtype, dims)
-            spec.name = self.next_tmp_name()
-            return spec.symbol()
+            return SymbolicArray(sympy.sympify(0), dtype, dims, is_placeholder=True)
 
         elif func is math.exp:
             if len(args) != 1:

@@ -5,8 +5,13 @@ from typing import Dict, List, Optional, Set, Tuple, Union
 import sympy
 
 from triton_bwd.dependence_checking import dependence_levels
-from triton_bwd.optimize_lang import ArraySpec
-from triton_bwd.sympy_utils import SympyIndexing, SympyShape
+from triton_bwd.sympy_utils import (
+    SymbolicArray,
+    SymbolicScalar,
+    SympyDtype,
+    SympyIndexing,
+    SympyShape,
+)
 
 
 class AbstractNode(abc.ABC):
@@ -305,9 +310,8 @@ class AbstractNode(abc.ABC):
 
         # Move the declaration inside the loop
         del loop.parent.obj.declarations[array_name]
-        new_symbol = sympy.IndexedBase(
-            array_name,
-            shape=new_shape,
+        new_symbol = SymbolicArray(
+            array_name, array_symbol.dtype, sympy.Tuple(*new_shape)
         )
         loop.obj.declarations[array_name] = Declaration(array_name, new_symbol)
 
@@ -328,7 +332,7 @@ class AbstractNode(abc.ABC):
 
 
 class Declaration(AbstractNode):
-    SymbolType = Union[sympy.Symbol, sympy.IndexedBase]
+    SymbolType = Union[SymbolicScalar, SymbolicArray]
 
     def __init__(self, name: str, symbol: SymbolType):
         super().__init__()
@@ -345,9 +349,9 @@ class Declaration(AbstractNode):
     def add_numbers(self) -> List["NumberedStmt"]:
         shape = SympyShape(self.symbol)
         if shape == ():
-            text = f"    let {self.name}: scalar"
+            text = f"let {self.name}: scalar"
         else:
-            text = f"    let {self.name}: array({', '.join(map(str, shape.args))})"
+            text = f"let {self.name}: array({', '.join(map(str, shape.args))})"
         return [
             NumberedStmt(
                 kind="D",
@@ -521,30 +525,30 @@ class NumberedStmt:
     def generate_code_decl(self, backend: str) -> Tuple[List[str], List[str]]:
         name, symbol = self.obj.name, self.obj.symbol
         shape = SympyShape(symbol)
+        dtype = SympyDtype(symbol)
         if shape == ():
-            initializer = "0" if symbol.is_integer else "0.0"
+            return [], [f'{name}: "{str(dtype)}"']
         else:
             shape_str = ", ".join(map(str, shape.args))
             if backend == "torch":
-                dtype = "torch.int64" if symbol.is_integer else "torch.float32"
+                dtype = f"torch.{str(dtype)}"
                 initializer = f"torch.zeros(({shape_str}), dtype={dtype})"
             elif backend == "triton":
-                dtype = "tl.int64" if symbol.is_integer else "tl.float32"
+                dtype = f"tl.{str(dtype)}"
                 initializer = f"tl.zeros(({shape_str}), dtype={dtype})"
             else:
                 raise ValueError(f"Unsupported backend: {backend}")
-        return [], [f"{name} = {initializer}"]
+            return [], [f"{name} = {initializer}"]
 
     def generate_code_loop(self, backend: str) -> Tuple[List[str], List[str]]:
         if self.parent is None:  # top-level loop
             arguments = []
 
             for arg in self.obj.arguments.values():
-                if isinstance(arg, sympy.Symbol):
-                    dtype = "int" if arg.is_integer else "float"
-                    arguments.append(f"{arg.name}: {dtype}")
-                elif isinstance(arg, sympy.IndexedBase):
-                    arguments.append(f"{arg.name}: torch.Tensor")
+                if isinstance(arg, SymbolicScalar):
+                    arguments.append(f"{arg.label.name}: {arg.dtype}")
+                elif isinstance(arg, SymbolicArray):
+                    arguments.append(f"{arg.label.name}: torch.Tensor")
 
             code_lines = [f"def function({', '.join(arguments)}):"]
 
@@ -614,9 +618,15 @@ def get_expr_mem_accesses(
 
     if isinstance(expr, SympyIndexing):
         array, index = expr.args
+
+        assert isinstance(array, SymbolicArray) and isinstance(
+            array.label, sympy.Symbol
+        )
+        array_name = array.label.name
+
         if not isinstance(index, sympy.Tuple):
             index = sympy.Tuple(index)
-        assert isinstance(array, sympy.IndexedBase)
+
         flat_index = sympy.Number(0)
         shape = SympyShape(array)
         for dim, idx in zip(shape.args, index.args):
@@ -624,13 +634,13 @@ def get_expr_mem_accesses(
 
         decl_loop = None
         for loop in loop_nest[::-1]:
-            if array.name in loop.obj.declarations:
+            if array_name in loop.obj.declarations:
                 decl_loop = loop
                 break
 
         return [
             MemAccess(
-                name=array.name, decl_loop=decl_loop, index=index, flat_index=flat_index
+                name=array_name, decl_loop=decl_loop, index=index, flat_index=flat_index
             )
         ]
 

@@ -195,19 +195,19 @@ def attention(
     T_KV: int,
     D: int,
 ):
-    l = Array(dtype="float32", dims=("B", "H", "T_Q"))
+    l = Array(dtype="float32", dims=(B, H, T_Q))
     for b in range(B):
         for h in range(H):
             for iq in range(T_Q):
                 l[b, h, iq] = 0.0
                 for d in range(D):
                     o[b, h, iq, d] = 0.0
-    scores = Array(dtype="float32", dims=("B", "H", "T_Q", "T_KV"))
+    scores = Array(dtype="float32", dims=(B, H, T_Q, T_KV))
     for b in range(B):
         for h in range(H):
             for iq in range(T_Q):
                 for ik in range(T_KV):
-                    s = 0
+                    s: "float32" = 0
                     for d in range(D):
                         s += q[b, h, iq, d] * k[b, h, ik, d]
                     scores[b, h, iq, ik] = s
@@ -216,7 +216,7 @@ def attention(
             for iq in range(T_Q):
                 for ik in range(T_KV):
                     l[b, h, iq] += math.exp(scores[b, h, iq, ik])
-    probs = Array(dtype="float32", dims=("B", "H", "T_Q", "T_KV"))
+    probs = Array(dtype="float32", dims=(B, H, T_Q, T_KV))
     for b in range(B):
         for h in range(H):
             for iq in range(T_Q):
