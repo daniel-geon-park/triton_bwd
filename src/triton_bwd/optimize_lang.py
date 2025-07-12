@@ -17,13 +17,13 @@ class Array:
 
 
 class ArraySpec:
-    def __init__(self, dtype: str, dims: tuple):
+    def __init__(self, dtype: str, dims: Iterable[str]):
         self.dtype = dtype
         self.dims = dims
         self.name: Optional[str] = None
         self.kind: Optional[str] = None
 
-    def symbol(self) -> sympy.Symbol:
+    def symbol(self) -> SymbolicArray:
         assert self.name is not None
         shape = sympy.Tuple(*[sympy.symbols(dim, integer=True) for dim in self.dims])
         return SymbolicArray(self.name, self.dtype, shape)
@@ -34,7 +34,7 @@ class IntSpec:
         self.dtype = dtype
         self.name: Optional[str] = None
 
-    def symbol(self) -> sympy.Symbol:
+    def symbol(self) -> SymbolicScalar:
         assert self.name is not None
         return SymbolicScalar(self.name, self.dtype)
 
@@ -44,7 +44,7 @@ class FloatSpec:
         self.name: Optional[str] = None
         self.dtype = dtype
 
-    def symbol(self) -> sympy.Symbol:
+    def symbol(self) -> SymbolicScalar:
         assert self.name is not None
         return SymbolicScalar(self.name, self.dtype)
 
