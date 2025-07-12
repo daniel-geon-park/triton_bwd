@@ -6,7 +6,7 @@ from typing import Any, Dict, List, Union
 
 import sympy
 
-from triton_bwd.abtract_tree import AbstractNode, Assignment, ForLoop
+from triton_bwd.abtract_tree import AbstractNode, Assignment, Declaration, ForLoop
 from triton_bwd.constexpr import Constexpr
 from triton_bwd.optimize_lang import Array, ArraySpec
 from triton_bwd.sympy_utils import SympyIndexing, SympyShape
@@ -48,7 +48,7 @@ class NodeVisitor(ast.NodeVisitor):
 
         declarations = {}
         for name, target in scope.locals.items():
-            declarations[name] = target
+            declarations[name] = Declaration(name, target)
 
         loop_var = sympy.symbols("__root_index", integer=True)
         return ForLoop(
@@ -58,6 +58,7 @@ class NodeVisitor(ast.NodeVisitor):
             index_step=sympy.Number(1),
             declarations=declarations,
             statements=statements,
+            arguments=self.args,
         )
 
     def visit_Return(self, node):
@@ -164,7 +165,7 @@ class NodeVisitor(ast.NodeVisitor):
         declarations = {}
         for name, target in scope.locals.items():
             if name != loop_var_name:
-                declarations[name] = target
+                declarations[name] = Declaration(name, target)
 
         return ForLoop(loop_var, begin, end, step, declarations, statements)
 

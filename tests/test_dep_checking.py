@@ -255,3 +255,5 @@ def test_optimize_attention():
     tree = tree.localize_array_allocation(0, 1)
     print("\nAfter localize_array_allocation:")
     print(tree.numbered_repr())
+
+    print(tree.add_numbers()[0].generate_code())

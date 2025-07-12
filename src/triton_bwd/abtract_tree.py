@@ -5,6 +5,7 @@ from typing import Dict, List, Optional, Set, Tuple, Union
 import sympy
 
 from triton_bwd.dependence_checking import dependence_levels
+from triton_bwd.optimize_lang import ArraySpec
 from triton_bwd.sympy_utils import SympyIndexing, SympyShape
 
 
@@ -161,7 +162,7 @@ class AbstractNode(abc.ABC):
         if loop_a is None or loop_b is None:
             raise ValueError(f"Invalid loop indices:\n" + self.numbered_repr())
 
-        if loop_a.succ is not loop_b.obj:
+        if loop_a.succ is not loop_b:
             raise ValueError(
                 f"Loops L{loop_idx_a} and L{loop_idx_b} are not consecutive:\n"
                 + self.numbered_repr()
@@ -229,7 +230,7 @@ class AbstractNode(abc.ABC):
 
         return new_tree
 
-    def localize_array_allocation(self, decl_idx: int, loop_idx: int):
+    def localize_array_allocation(self, decl_idx: int, loop_idx: int) -> "AbstractNode":
         """Moves an array declaration one level inside a loop."""
         new_tree = copy.deepcopy(self)  # Ensure we don't modify the original tree
 
@@ -253,7 +254,7 @@ class AbstractNode(abc.ABC):
             )
 
         # Make sure no other siblings contain references to the array
-        array_name, array_symbol = decl.obj
+        array_name, array_symbol = decl.obj.name, decl.obj.symbol
         for sibling in loop.parent.children:
             if sibling is loop:
                 continue
@@ -299,9 +300,16 @@ class AbstractNode(abc.ABC):
                     )
                 index_dim = cur_index_dim
 
+        old_shape = array_symbol.shape.args
+        new_shape = old_shape[:index_dim] + old_shape[index_dim + 1 :]
+
         # Move the declaration inside the loop
         del loop.parent.obj.declarations[array_name]
-        loop.obj.declarations[array_name] = decl.obj[1]
+        new_symbol = sympy.IndexedBase(
+            array_name,
+            shape=new_shape,
+        )
+        loop.obj.declarations[array_name] = Declaration(array_name, new_symbol)
 
         # Update indices in the loop's statements
         pattern = SympyIndexing(array_symbol, sympy.Wild("index"))
@@ -319,6 +327,43 @@ class AbstractNode(abc.ABC):
         return new_tree
 
 
+class Declaration(AbstractNode):
+    SymbolType = Union[sympy.Symbol, sympy.IndexedBase]
+
+    def __init__(self, name: str, symbol: SymbolType):
+        super().__init__()
+        self.name = name
+        self.symbol = symbol
+
+    def __repr__(self) -> str:
+        shape = SympyShape(self.symbol)
+        if shape == ():
+            return f"let {self.name}: scalar"
+        else:
+            return f"let {self.name}: array({', '.join(map(str, shape.args))})"
+
+    def add_numbers(self) -> List["NumberedStmt"]:
+        shape = SympyShape(self.symbol)
+        if shape == ():
+            text = f"    let {self.name}: scalar"
+        else:
+            text = f"    let {self.name}: array({', '.join(map(str, shape.args))})"
+        return [
+            NumberedStmt(
+                kind="D",
+                num=0,
+                obj=self,
+                level=0,
+                parent=None,
+                children=[],
+                descendants=[],
+                prev=None,
+                succ=None,
+                text=text,
+            )
+        ]
+
+
 class ForLoop(AbstractNode):
     def __init__(
         self,
@@ -326,8 +371,10 @@ class ForLoop(AbstractNode):
         index_begin: sympy.Basic,
         index_end: sympy.Basic,
         index_step: sympy.Basic,
-        declarations: Dict[str, sympy.Basic],
+        declarations: Dict[str, Declaration],
         statements: List[AbstractNode],
+        is_kernel: bool = False,
+        arguments: Optional[Dict[str, sympy.Basic]] = None,
     ):
         super().__init__()
         assert index_step == 1, "Only step size of 1 is supported for now."
@@ -337,17 +384,13 @@ class ForLoop(AbstractNode):
         self.index_step = index_step
         self.declarations = declarations
         self.statements = statements
+        self.is_kernel = is_kernel
+        self.arguments = arguments
 
     def __repr__(self):
         stmt_reprs = []
-        for name, decl in self.declarations.items():
-            shape = SympyShape(decl)
-            if shape == ():
-                stmt_reprs.append(f"let {name}: scalar")
-            else:
-                stmt_reprs.append(
-                    f"let {name}: array({', '.join(map(str, shape.args))})"
-                )
+        for decl in self.declarations.values():
+            stmt_reprs.append(repr(decl))
         for stmt in self.statements:
             stmt_repr = repr(stmt)
             stmt_reprs.extend(stmt_repr.split("\n"))
@@ -377,41 +420,18 @@ class ForLoop(AbstractNode):
         ]
         loop_idx = 1
 
-        for name, decl in self.declarations.items():
-            shape = SympyShape(decl)
-            if shape == ():
-                text = f"    let {name}: scalar"
-            else:
-                text = f"    let {name}: array({', '.join(map(str, shape.args))})"
-            result.append(
-                NumberedStmt(
-                    kind="D",
-                    num=decl_idx,
-                    obj=(name, decl),
-                    level=1,
-                    parent=result[0],
-                    children=[],
-                    descendants=[],
-                    prev=None,
-                    succ=None,
-                    text=text,
-                )
-            )
-            decl_idx += 1
-
         children = []
-        for idx in range(len(self.statements)):
-            stmt = self.statements[idx]
-            prev_stmt = self.statements[idx - 1] if idx > 0 else None
-            succ_stmt = (
-                self.statements[idx + 1] if idx < len(self.statements) - 1 else None
-            )
 
+        prev_stmt = None
+        for stmt in [*self.declarations.values(), *self.statements]:
             numbered_stmts = stmt.add_numbers()
+
             if len(numbered_stmts) > 0:
+                if prev_stmt is not None:
+                    prev_stmt.succ = numbered_stmts[0]
                 numbered_stmts[0].parent = result[0]
                 numbered_stmts[0].prev = prev_stmt
-                numbered_stmts[0].succ = succ_stmt
+                prev_stmt = numbered_stmts[0]
                 children.append(numbered_stmts[0])
 
             for sub_stmt in numbered_stmts:
@@ -465,11 +485,9 @@ class Assignment(AbstractNode):
         ]
 
 
-Decl = Tuple[str, sympy.Basic]
-Stmt = Union[ForLoop, Decl, Assignment]
-
-
 class NumberedStmt:
+    Stmt = Union[ForLoop, Declaration, Assignment]
+
     def __init__(
         self,
         kind: str,
@@ -479,8 +497,8 @@ class NumberedStmt:
         parent: Optional["NumberedStmt"],
         children: List["NumberedStmt"],
         descendants: List["NumberedStmt"],
-        prev: Optional[Stmt],
-        succ: Optional[Stmt],
+        prev: Optional["NumberedStmt"],
+        succ: Optional["NumberedStmt"],
         text: str,
     ):
         self.kind = kind
@@ -496,6 +514,67 @@ class NumberedStmt:
 
     def __repr__(self):
         return f"{f'{self.kind}{self.num}':>5}: {self.text}"
+
+    def generate_code_asgn(self, backend: str) -> Tuple[List[str], List[str]]:
+        return [], [f"{self.obj.target} = {self.obj.value}"]
+
+    def generate_code_decl(self, backend: str) -> Tuple[List[str], List[str]]:
+        name, symbol = self.obj.name, self.obj.symbol
+        shape = SympyShape(symbol)
+        if shape == ():
+            initializer = "0" if symbol.is_integer else "0.0"
+        else:
+            shape_str = ", ".join(map(str, shape.args))
+            if backend == "torch":
+                dtype = "torch.int64" if symbol.is_integer else "torch.float32"
+                initializer = f"torch.zeros(({shape_str}), dtype={dtype})"
+            elif backend == "triton":
+                dtype = "tl.int64" if symbol.is_integer else "tl.float32"
+                initializer = f"tl.zeros(({shape_str}), dtype={dtype})"
+            else:
+                raise ValueError(f"Unsupported backend: {backend}")
+        return [], [f"{name} = {initializer}"]
+
+    def generate_code_loop(self, backend: str) -> Tuple[List[str], List[str]]:
+        if self.parent is None:  # top-level loop
+            arguments = []
+
+            for arg in self.obj.arguments.values():
+                if isinstance(arg, sympy.Symbol):
+                    dtype = "int" if arg.is_integer else "float"
+                    arguments.append(f"{arg.name}: {dtype}")
+                elif isinstance(arg, sympy.IndexedBase):
+                    arguments.append(f"{arg.name}: torch.Tensor")
+
+            code_lines = [f"def function({', '.join(arguments)}):"]
+
+        else:
+            code_lines = [
+                f"for {self.obj.index_var} in range({self.obj.index_begin}, {self.obj.index_end}, {self.obj.index_step}):"
+            ]
+
+        preamble = []
+        for child in self.children:
+            child_preamble, chld_code = child._generate_code_impl(backend)
+            preamble.extend(child_preamble)
+            for line in chld_code:
+                code_lines.append(f"    {line}")
+
+        return preamble, code_lines
+
+    def _generate_code_impl(self, backend: str) -> Tuple[List[str], List[str]]:
+        if self.kind == "A":
+            return self.generate_code_asgn(backend)
+        elif self.kind == "L":
+            return self.generate_code_loop(backend)
+        elif self.kind == "D":
+            return self.generate_code_decl(backend)
+        else:
+            raise ValueError(f"Unsupported statement kind: {self.kind}")
+
+    def generate_code(self) -> str:
+        preamble, lines = self._generate_code_impl(backend="torch")
+        return "\n".join(preamble + lines)
 
 
 class MemAccess:
@@ -578,3 +657,9 @@ def get_mem_accesses(stmt: "NumberedStmt") -> Tuple[List[MemAccess], List[MemAcc
             stores.extend(cur_stores)
             loads.extend(cur_loads)
         return stores, loads
+
+    elif stmt.kind == "D":
+        return [], []
+
+    else:
+        raise ValueError(f"Unsupported statement kind: {stmt.kind}")
