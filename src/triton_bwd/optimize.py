@@ -4,7 +4,7 @@ from types import FunctionType
 from typing import Callable
 
 from triton_bwd.abtract_tree import *
-from triton_bwd.analyzed_tree import NumberedStmt, analyze_tree
+from triton_bwd.analyzed_tree import AnalyzedNode, analyze_tree
 from triton_bwd.node_visitor import NodeVisitor
 from triton_bwd.optimize_lang import *
 
@@ -79,7 +79,7 @@ class OptimizableFunction:
         abstract_tree: AbstractNode = visitor.visit(tree)
 
         # Analyze the abstract tree to create a numbered statement tree
-        self.tree: NumberedStmt = analyze_tree(abstract_tree)
+        self.tree: AnalyzedNode = analyze_tree(abstract_tree)
 
     def __call__(self, *args, **kwargs):
         return self.func(*args, **kwargs)

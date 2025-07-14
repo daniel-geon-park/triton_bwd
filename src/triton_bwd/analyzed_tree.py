@@ -14,18 +14,18 @@ from triton_bwd.sympy_utils import (
 )
 
 
-class NumberedStmt:
+class AnalyzedNode:
     def __init__(
         self,
         kind: str,
         num: int,
         obj: AbstractNode,
         level: int,
-        parent: Optional["NumberedStmt"],
-        children: List["NumberedStmt"],
-        descendants: List["NumberedStmt"],
-        prev: Optional["NumberedStmt"],
-        succ: Optional["NumberedStmt"],
+        parent: Optional["AnalyzedNode"],
+        children: List["AnalyzedNode"],
+        descendants: List["AnalyzedNode"],
+        prev: Optional["AnalyzedNode"],
+        succ: Optional["AnalyzedNode"],
         text: str,
     ):
         self.kind = kind
@@ -49,7 +49,7 @@ class NumberedStmt:
             for stmt in numbered
         )
 
-    def loop_nest(self) -> List["NumberedStmt"]:
+    def loop_nest(self) -> List["AnalyzedNode"]:
         """Returns the nesting of the current statement."""
         if self.parent is None:
             return []
@@ -164,7 +164,7 @@ class NumberedStmt:
                 dependencies.update(deps)
         return dependencies
 
-    def fuse_loop(self, loop_idx_a: int, loop_idx_b: int) -> "NumberedStmt":
+    def fuse_loop(self, loop_idx_a: int, loop_idx_b: int) -> "AnalyzedNode":
         """Fuses two consecutive loops."""
         new_tree = copy.deepcopy(self.obj)  # Ensure we don't modify the original tree
 
@@ -256,7 +256,7 @@ class NumberedStmt:
 
         return analyzed_tree
 
-    def localize_array_allocation(self, decl_idx: int, loop_idx: int) -> "NumberedStmt":
+    def localize_array_allocation(self, decl_idx: int, loop_idx: int) -> "AnalyzedNode":
         """Moves an array declaration one level inside a loop."""
         new_tree = copy.deepcopy(self.obj)  # Ensure we don't modify the original tree
 
@@ -357,11 +357,11 @@ class NumberedStmt:
 
         return analyze_tree(new_tree)
 
-    def generate_code_asgn(self, backend: str) -> Tuple[List[str], List[str]]:
+    def _generate_code_asgn(self, backend: str) -> Tuple[List[str], List[str]]:
         assert isinstance(self.obj, Assignment)
         return [], [f"{self.obj.target} = {self.obj.value}"]
 
-    def generate_code_decl(self, backend: str) -> Tuple[List[str], List[str]]:
+    def _generate_code_decl(self, backend: str) -> Tuple[List[str], List[str]]:
         assert isinstance(self.obj, Declaration)
         name, symbol = self.obj.name, self.obj.symbol
         shape = SympyShape(symbol)
@@ -380,7 +380,7 @@ class NumberedStmt:
                 raise ValueError(f"Unsupported backend: {backend}")
             return [], [f"{name} = {initializer}"]
 
-    def generate_code_loop(self, backend: str) -> Tuple[List[str], List[str]]:
+    def _generate_code_loop(self, backend: str) -> Tuple[List[str], List[str]]:
         assert isinstance(self.obj, ForLoop)
         if self.parent is None:  # top-level loop
             arguments = []
@@ -409,11 +409,11 @@ class NumberedStmt:
 
     def _generate_code_impl(self, backend: str) -> Tuple[List[str], List[str]]:
         if self.kind == "A":
-            return self.generate_code_asgn(backend)
+            return self._generate_code_asgn(backend)
         elif self.kind == "L":
-            return self.generate_code_loop(backend)
+            return self._generate_code_loop(backend)
         elif self.kind == "D":
-            return self.generate_code_decl(backend)
+            return self._generate_code_decl(backend)
         else:
             raise ValueError(f"Unsupported statement kind: {self.kind}")
 
@@ -422,14 +422,14 @@ class NumberedStmt:
         return "\n".join(preamble + lines)
 
 
-def analyze_tree(node: AbstractNode) -> NumberedStmt:
+def analyze_tree(node: AbstractNode) -> AnalyzedNode:
     if isinstance(node, Declaration):
         shape = SympyShape(node.symbol)
         if shape == ():
             text = f"let {node.name}: scalar"
         else:
             text = f"let {node.name}: array({', '.join(map(str, shape.args))})"
-        return NumberedStmt(
+        return AnalyzedNode(
             kind="D",
             num=0,
             obj=node,
@@ -448,7 +448,7 @@ def analyze_tree(node: AbstractNode) -> NumberedStmt:
 
         text = f"for {node.index_var} in range({node.index_begin}, {node.index_end}, {node.index_step}):"
         result = [
-            NumberedStmt(
+            AnalyzedNode(
                 kind="L",
                 num=0,
                 obj=node,
@@ -497,7 +497,7 @@ def analyze_tree(node: AbstractNode) -> NumberedStmt:
         return result[0]
 
     elif isinstance(node, Assignment):
-        return NumberedStmt(
+        return AnalyzedNode(
             kind="A",
             num=0,
             obj=node,
@@ -518,7 +518,7 @@ class MemAccess:
     def __init__(
         self,
         name: str,
-        decl_loop: Optional["NumberedStmt"],
+        decl_loop: Optional["AnalyzedNode"],
         index: sympy.Tuple,
         flat_index: sympy.Basic,
     ):
@@ -530,7 +530,7 @@ class MemAccess:
 
 def get_expr_mem_accesses(
     expr: sympy.Basic,
-    loop_nest: List["NumberedStmt"],
+    loop_nest: List["AnalyzedNode"],
 ) -> List[MemAccess]:
 
     if isinstance(expr, sympy.Symbol):
@@ -585,7 +585,7 @@ def get_expr_mem_accesses(
     return results
 
 
-def get_mem_accesses(stmt: "NumberedStmt") -> Tuple[List[MemAccess], List[MemAccess]]:
+def get_mem_accesses(stmt: "AnalyzedNode") -> Tuple[List[MemAccess], List[MemAccess]]:
     if stmt.kind == "A":
         assert isinstance(stmt.obj, Assignment)
         nest = stmt.loop_nest()
