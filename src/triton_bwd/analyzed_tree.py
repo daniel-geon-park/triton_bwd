@@ -423,51 +423,86 @@ class AnalyzedNode:
 
 
 def analyze_tree(node: AbstractNode) -> AnalyzedNode:
-    if isinstance(node, Declaration):
-        shape = SympyShape(node.symbol)
-        if shape == ():
-            text = f"let {node.name}: scalar"
-        else:
-            text = f"let {node.name}: array({', '.join(map(str, shape.args))})"
-        return AnalyzedNode(
-            kind="D",
-            num=0,
-            obj=node,
-            level=0,
-            parent=None,
-            children=[],
-            descendants=[],
-            prev=None,
-            succ=None,
-            text=text,
-        )
+    analyzed, *_ = _analyze_tree_impl(node)
+    return analyzed
 
-    elif isinstance(node, ForLoop):
-        asgn_idx = 0
-        decl_idx = 0
 
-        text = f"for {node.index_var} in range({node.index_begin}, {node.index_end}, {node.index_step}):"
-        result = [
+def _analyze_tree_impl(
+    node: AbstractNode,
+    level=0,
+    asgn_idx=0,
+    decl_idx=0,
+    loop_idx=0,
+) -> Tuple[AnalyzedNode, int, int, int]:
+
+    if isinstance(node, Assignment):
+        return (
             AnalyzedNode(
-                kind="L",
-                num=0,
+                kind="A",
+                num=asgn_idx,
                 obj=node,
-                level=0,
+                level=level,
                 parent=None,
                 children=[],
                 descendants=[],
                 prev=None,
                 succ=None,
-                text=text,
+                text="    " * level + repr(node),
+            ),
+            asgn_idx + 1,
+            decl_idx,
+            loop_idx,
+        )
+
+    elif isinstance(node, Declaration):
+        shape = SympyShape(node.symbol)
+        if shape == ():
+            text = f"let {node.name}: scalar"
+        else:
+            text = f"let {node.name}: array({', '.join(map(str, shape.args))})"
+        return (
+            AnalyzedNode(
+                kind="D",
+                num=decl_idx,
+                obj=node,
+                level=level,
+                parent=None,
+                children=[],
+                descendants=[],
+                prev=None,
+                succ=None,
+                text="    " * level + text,
+            ),
+            asgn_idx,
+            decl_idx + 1,
+            loop_idx,
+        )
+
+    elif isinstance(node, ForLoop):
+        text = f"for {node.index_var} in range({node.index_begin}, {node.index_end}, {node.index_step}):"
+        result = [
+            AnalyzedNode(
+                kind="L",
+                num=loop_idx,
+                obj=node,
+                level=level,
+                parent=None,
+                children=[],
+                descendants=[],
+                prev=None,
+                succ=None,
+                text="    " * level + text,
             )
         ]
-        loop_idx = 1
+        loop_idx += 1
 
         children = []
 
         prev_stmt = None
         for stmt in [*node.declarations.values(), *node.statements]:
-            analyzed = analyze_tree(stmt)
+            analyzed, asgn_idx, decl_idx, loop_idx = _analyze_tree_impl(
+                stmt, level + 1, asgn_idx, decl_idx, loop_idx
+            )
             numbered_stmts = [analyzed, *analyzed.descendants]
 
             if len(numbered_stmts) > 0:
@@ -478,37 +513,12 @@ def analyze_tree(node: AbstractNode) -> AnalyzedNode:
                 prev_stmt = numbered_stmts[0]
                 children.append(numbered_stmts[0])
 
-            for sub_stmt in numbered_stmts:
-                sub_stmt.level += 1
-                sub_stmt.text = "    " + sub_stmt.text
-                if sub_stmt.kind == "A":
-                    sub_stmt.num = asgn_idx
-                    asgn_idx += 1
-                elif sub_stmt.kind == "L":
-                    sub_stmt.num = loop_idx
-                    loop_idx += 1
-                elif sub_stmt.kind == "D":
-                    sub_stmt.num = decl_idx
-                    decl_idx += 1
-                result.append(sub_stmt)
+            result.extend(numbered_stmts)
 
         result[0].children = children
         result[0].descendants = result[1:]
-        return result[0]
 
-    elif isinstance(node, Assignment):
-        return AnalyzedNode(
-            kind="A",
-            num=0,
-            obj=node,
-            level=0,
-            parent=None,
-            children=[],
-            descendants=[],
-            prev=None,
-            succ=None,
-            text=repr(node),
-        )
+        return result[0], asgn_idx, decl_idx, loop_idx
 
     else:
         raise ValueError(f"Unsupported node type: {type(node)}")
