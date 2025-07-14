@@ -1,5 +1,6 @@
 import math
 
+from triton_bwd.analyzed_tree import analyze_tree
 from triton_bwd.optimize import (
     Array,
     ArraySpec,
@@ -32,8 +33,8 @@ def matrix_multiply(
 
 
 def test_matmul():
-    print(matrix_multiply.abstract_tree.numbered_repr())
-    result = matrix_multiply.abstract_tree.find_dependence(0, 0)
+    print(matrix_multiply.tree.numbered_repr())
+    result = matrix_multiply.tree.find_dependence(0, 0)
     print(result)
     assert result == {("flow", 3, "c"), ("anti", 3, "c"), ("outp", 3, "c")}
 
@@ -67,12 +68,12 @@ def book_example(
 
 
 def test_book_example():
-    print(book_example.abstract_tree.numbered_repr())
-    book_example.abstract_tree.find_dependence(1, 1)
+    print(book_example.tree.numbered_repr())
+    book_example.tree.find_dependence(1, 1)
     dependencies = set()
     for i in range(6):
         for j in range(6):
-            deps = book_example.abstract_tree.find_dependence(i, j)
+            deps = book_example.tree.find_dependence(i, j)
             if deps:
                 print(f"Dependence from {i+1} to {j+1}: {deps}")
             for dep in deps:
@@ -161,15 +162,15 @@ def example3(
 
 
 def test_fuse_loop():
-    print(example1.abstract_tree.numbered_repr())
-    print("Fuse result:", example1.abstract_tree.fuse_loop(3, 4), sep="\n")
+    print(example1.tree.numbered_repr())
+    print("Fuse result:", example1.tree.fuse_loop(3, 4), sep="\n")
 
-    print(example2.abstract_tree.numbered_repr())
-    print("Fuse result:", example2.abstract_tree.fuse_loop(3, 4), sep="\n")
+    print(example2.tree.numbered_repr())
+    print("Fuse result:", example2.tree.fuse_loop(3, 4), sep="\n")
 
-    print(example3.abstract_tree.numbered_repr())
+    print(example3.tree.numbered_repr())
     try:
-        example3.abstract_tree.fuse_loop(3, 4)
+        example3.tree.fuse_loop(3, 4)
     except ValueError as e:
         print(f"Expected error: {e}")
     else:
@@ -232,7 +233,7 @@ def attention(
 
 
 def test_optimize_attention():
-    tree = attention.abstract_tree
+    tree = attention.tree
     print(tree.numbered_repr())
 
     tree = tree.fuse_loop(1, 5)
@@ -256,4 +257,4 @@ def test_optimize_attention():
     print("\nAfter localize_array_allocation:")
     print(tree.numbered_repr())
 
-    print(tree.add_numbers()[0].generate_code())
+    print(tree.generate_code())
