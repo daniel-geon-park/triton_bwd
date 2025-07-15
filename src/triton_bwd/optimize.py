@@ -76,10 +76,12 @@ class OptimizableFunction:
             func_globals=self.func.__globals__,
             args=args,
         )
-        abstract_tree: AbstractNode = visitor.visit(tree)
+        self.abstract_tree: AbstractNode = visitor.visit(tree)
 
+    @property
+    def tree(self):
         # Analyze the abstract tree to create a numbered statement tree
-        self.tree: AnalyzedNode = analyze_tree(abstract_tree)
+        return analyze_tree(self.abstract_tree)
 
     def __call__(self, *args, **kwargs):
         return self.func(*args, **kwargs)

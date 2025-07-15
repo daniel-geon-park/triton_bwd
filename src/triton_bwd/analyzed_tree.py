@@ -5,6 +5,8 @@ import sympy
 
 from triton_bwd.abtract_tree import AbstractNode, Assignment, Declaration, ForLoop
 from triton_bwd.dependence_checking import dependence_levels
+from triton_bwd.flow_analysis import flow_analysis
+from triton_bwd.mem_access import get_mem_accesses
 from triton_bwd.sympy_utils import (
     SymbolicArray,
     SymbolicScalar,
@@ -24,8 +26,8 @@ class AnalyzedNode:
         parent: Optional["AnalyzedNode"],
         children: List["AnalyzedNode"],
         descendants: List["AnalyzedNode"],
-        prev: Optional["AnalyzedNode"],
-        succ: Optional["AnalyzedNode"],
+        predecessors: Optional["AnalyzedNode"],
+        successors: Optional["AnalyzedNode"],
         text: str,
     ):
         self.kind = kind
@@ -35,8 +37,8 @@ class AnalyzedNode:
         self.parent = parent
         self.children = children
         self.descendants = descendants
-        self.prev = prev
-        self.succ = succ
+        self.prev = predecessors
+        self.succ = successors
         self.text = text
 
     def __repr__(self):
@@ -85,17 +87,17 @@ class AnalyzedNode:
 
         def add_deps(dep_kind: str, S_accs, T_accs):
             for s_acc in S_accs:
-                s_var = (s_acc.name, s_acc.decl_loop)
+                s_var = (s_acc.name, s_acc.decl_stmt)
                 if on_vars is not None and s_acc.name not in on_vars:
                     continue
                 for t_acc in T_accs:
                     if on_vars is not None and t_acc.name not in on_vars:
                         continue
-                    t_var = (t_acc.name, t_acc.decl_loop)
+                    t_var = (t_acc.name, t_acc.decl_stmt)
                     if s_var == t_var:
                         min_level = 0
-                        if s_acc.decl_loop is not None:
-                            min_level = s_acc.decl_loop.level + 1
+                        if s_acc.decl_stmt is not None:
+                            min_level = s_acc.decl_stmt.level
                         dep_levels = dependence_levels(
                             s_before_t=i < j,
                             min_level=min_level,
@@ -291,7 +293,7 @@ class AnalyzedNode:
 
             loads, stores = get_mem_accesses(sibling)
             for acc in loads + stores:
-                if (acc.name, acc.decl_loop) == (array_name, decl.parent):
+                if (acc.name, acc.decl_stmt) == (array_name, decl):
                     raise ValueError(
                         f"Variable in D{decl_idx} is referenced by another sibling:\n"
                         + self.numbered_repr()
@@ -316,7 +318,7 @@ class AnalyzedNode:
         stores, loads = get_mem_accesses(loop)
         index_dim = None
         for acc in stores + loads:
-            if (acc.name, acc.decl_loop) == (array_name, decl.parent):
+            if (acc.name, acc.decl_stmt) == (array_name, decl):
                 if index_var not in acc.index.args:
                     raise ValueError(
                         f"Variable is not indexed by the loop's index variable {index_var}"
@@ -356,6 +358,16 @@ class AnalyzedNode:
                 stmt.obj.value = stmt.obj.value.replace(pattern, update_index)
 
         return analyze_tree(new_tree)
+
+    def _generate_code_impl(self, backend: str) -> Tuple[List[str], List[str]]:
+        if self.kind == "A":
+            return self._generate_code_asgn(backend)
+        elif self.kind == "L":
+            return self._generate_code_loop(backend)
+        elif self.kind == "D":
+            return self._generate_code_decl(backend)
+        else:
+            raise ValueError(f"Unsupported statement kind: {self.kind}")
 
     def _generate_code_asgn(self, backend: str) -> Tuple[List[str], List[str]]:
         assert isinstance(self.obj, Assignment)
@@ -407,16 +419,6 @@ class AnalyzedNode:
 
         return preamble, code_lines
 
-    def _generate_code_impl(self, backend: str) -> Tuple[List[str], List[str]]:
-        if self.kind == "A":
-            return self._generate_code_asgn(backend)
-        elif self.kind == "L":
-            return self._generate_code_loop(backend)
-        elif self.kind == "D":
-            return self._generate_code_decl(backend)
-        else:
-            raise ValueError(f"Unsupported statement kind: {self.kind}")
-
     def generate_code(self) -> str:
         preamble, lines = self._generate_code_impl(backend="torch")
         return "\n".join(preamble + lines)
@@ -424,6 +426,9 @@ class AnalyzedNode:
 
 def analyze_tree(node: AbstractNode) -> AnalyzedNode:
     analyzed, *_ = _analyze_tree_impl(node)
+
+    entry, exit = flow_analysis(analyzed)
+
     return analyzed
 
 
@@ -445,8 +450,8 @@ def _analyze_tree_impl(
                 parent=None,
                 children=[],
                 descendants=[],
-                prev=None,
-                succ=None,
+                predecessors=None,
+                successors=None,
                 text="    " * level + repr(node),
             ),
             asgn_idx + 1,
@@ -469,8 +474,8 @@ def _analyze_tree_impl(
                 parent=None,
                 children=[],
                 descendants=[],
-                prev=None,
-                succ=None,
+                predecessors=None,
+                successors=None,
                 text="    " * level + text,
             ),
             asgn_idx,
@@ -489,8 +494,8 @@ def _analyze_tree_impl(
                 parent=None,
                 children=[],
                 descendants=[],
-                prev=None,
-                succ=None,
+                predecessors=None,
+                successors=None,
                 text="    " * level + text,
             )
         ]
@@ -522,97 +527,3 @@ def _analyze_tree_impl(
 
     else:
         raise ValueError(f"Unsupported node type: {type(node)}")
-
-
-class MemAccess:
-    def __init__(
-        self,
-        name: str,
-        decl_loop: Optional["AnalyzedNode"],
-        index: sympy.Tuple,
-        flat_index: sympy.Basic,
-    ):
-        self.name = name
-        self.decl_loop = decl_loop
-        self.index = index
-        self.flat_index = flat_index
-
-
-def get_expr_mem_accesses(
-    expr: sympy.Basic,
-    loop_nest: List["AnalyzedNode"],
-) -> List[MemAccess]:
-
-    if isinstance(expr, sympy.Symbol):
-        decl_loop = None
-        for loop in loop_nest[::-1]:
-            assert isinstance(loop.obj, ForLoop)
-            if expr.name in loop.obj.declarations:
-                decl_loop = loop
-                break
-
-        return [
-            MemAccess(
-                name=expr.name,
-                decl_loop=decl_loop,
-                index=sympy.Tuple(),
-                flat_index=sympy.Number(0),
-            )
-        ]
-
-    if isinstance(expr, SympyIndexing):
-        array, index = expr.args
-
-        assert isinstance(array, SymbolicArray) and isinstance(
-            array.label, sympy.Symbol
-        )
-        array_name = array.label.name
-
-        if not isinstance(index, sympy.Tuple):
-            index = sympy.Tuple(index)
-
-        flat_index = sympy.Number(0)
-        shape = SympyShape(array)
-        for dim, idx in zip(shape.args, index.args):
-            flat_index = flat_index * dim + idx
-
-        decl_loop = None
-        for loop in loop_nest[::-1]:
-            assert isinstance(loop.obj, ForLoop)
-            if array_name in loop.obj.declarations:
-                decl_loop = loop
-                break
-
-        return [
-            MemAccess(
-                name=array_name, decl_loop=decl_loop, index=index, flat_index=flat_index
-            )
-        ]
-
-    results = []
-    for arg in expr.args:
-        results.extend(get_expr_mem_accesses(arg, loop_nest))
-    return results
-
-
-def get_mem_accesses(stmt: "AnalyzedNode") -> Tuple[List[MemAccess], List[MemAccess]]:
-    if stmt.kind == "A":
-        assert isinstance(stmt.obj, Assignment)
-        nest = stmt.loop_nest()
-        stores = get_expr_mem_accesses(stmt.obj.target, nest)
-        loads = get_expr_mem_accesses(stmt.obj.value, nest)
-        return stores, loads
-
-    elif stmt.kind == "L":
-        stores, loads = [], []
-        for child in stmt.children:
-            cur_stores, cur_loads = get_mem_accesses(child)
-            stores.extend(cur_stores)
-            loads.extend(cur_loads)
-        return stores, loads
-
-    elif stmt.kind == "D":
-        return [], []
-
-    else:
-        raise ValueError(f"Unsupported statement kind: {stmt.kind}")
