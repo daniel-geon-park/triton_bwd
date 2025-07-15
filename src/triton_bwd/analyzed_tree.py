@@ -5,7 +5,7 @@ import sympy
 
 from triton_bwd.abtract_tree import AbstractNode, Assignment, Declaration, ForLoop
 from triton_bwd.dependence_checking import dependence_levels
-from triton_bwd.flow_analysis import flow_analysis
+from triton_bwd.flow_analysis import DefDict, flow_analysis
 from triton_bwd.mem_access import get_mem_accesses
 from triton_bwd.sympy_utils import (
     SymbolicArray,
@@ -40,6 +40,10 @@ class AnalyzedNode:
         self.prev = predecessors
         self.succ = successors
         self.text = text
+
+        # For flow analysis
+        self.in_defs: DefDict = {}
+        self.out_defs: DefDict = {}
 
     def __repr__(self):
         return f"{f'{self.kind}{self.num}':>5}: {self.text}"
@@ -426,9 +430,7 @@ class AnalyzedNode:
 
 def analyze_tree(node: AbstractNode) -> AnalyzedNode:
     analyzed, *_ = _analyze_tree_impl(node)
-
-    entry, exit = flow_analysis(analyzed)
-
+    flow_analysis(analyzed)
     return analyzed
 
 
