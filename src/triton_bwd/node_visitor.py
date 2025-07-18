@@ -58,7 +58,7 @@ class NodeVisitor(ast.NodeVisitor):
         for name, target in scope.locals.items():
             declarations[name] = Declaration(name, target)
 
-        loop_var = sympy.symbols("__root_index", integer=True)
+        loop_var = SymbolicScalar("__root_index", "int64")
         return ForLoop(
             index_var=loop_var,
             index_begin=sympy.Number(0),
@@ -188,7 +188,7 @@ class NodeVisitor(ast.NodeVisitor):
         if loop_var_name in self.locals:
             raise ValueError(f"Loop variable {loop_var_name} already defined.")
 
-        loop_var = sympy.symbols(loop_var_name, integer=True)
+        loop_var = SymbolicScalar(loop_var_name, "int64")
         scope = self.scope(extra_locals={loop_var_name: loop_var})
         statements = scope.visit_compound_statement(node.body)
 

@@ -1,9 +1,14 @@
-from typing import TYPE_CHECKING, List, Optional, Tuple
+from typing import TYPE_CHECKING, List, Optional, Tuple, Union
 
 import sympy
 
-from triton_bwd.abtract_tree import Declaration
-from triton_bwd.sympy_utils import SymbolicArray, SympyIndexing, SympyShape
+from triton_bwd.abtract_tree import Assignment, Declaration, ForLoop
+from triton_bwd.sympy_utils import (
+    SymbolicArray,
+    SymbolicScalar,
+    SympyIndexing,
+    SympyShape,
+)
 
 if TYPE_CHECKING:
     from triton_bwd.analyzed_tree import AnalyzedNode
@@ -13,12 +18,14 @@ class MemAccess:
     def __init__(
         self,
         name: str,
+        symbol: Union[SymbolicScalar, SymbolicArray],
         decl_stmt: Optional["AnalyzedNode"],
         index: sympy.Tuple,
         flat_index: sympy.Basic,
         statement: Optional["AnalyzedNode"] = None,
     ):
         self.name = name
+        self.symbol = symbol
         self.decl_stmt = decl_stmt  # None if not declared in the loop nest (e.g. global variable or paremeter)
         self.index = index
         self.flat_index = flat_index
@@ -27,6 +34,7 @@ class MemAccess:
 
 def get_mem_accesses(stmt: "AnalyzedNode") -> Tuple[List[MemAccess], List[MemAccess]]:
     if stmt.kind == "A":
+        assert isinstance(stmt.obj, Assignment)
         nest = stmt.loop_nest()
         stores = get_expr_mem_accesses(stmt.obj.target, nest)
         loads = get_expr_mem_accesses(stmt.obj.value, nest)
@@ -35,7 +43,14 @@ def get_mem_accesses(stmt: "AnalyzedNode") -> Tuple[List[MemAccess], List[MemAcc
         return stores, loads
 
     elif stmt.kind == "L":
-        stores, loads = [], []
+        assert isinstance(stmt.obj, ForLoop)
+        nest = [*stmt.loop_nest(), stmt]
+        stores = get_expr_mem_accesses(stmt.obj.index_var, nest)
+        loads = [
+            *get_expr_mem_accesses(stmt.obj.index_begin, nest),
+            *get_expr_mem_accesses(stmt.obj.index_end, nest),
+            *get_expr_mem_accesses(stmt.obj.index_step, nest),
+        ]
         for child in stmt.children:
             cur_stores, cur_loads = get_mem_accesses(child)
             stores.extend(cur_stores)
@@ -53,13 +68,15 @@ def get_expr_mem_accesses(
     expr: sympy.Basic,
     loop_nest: List["AnalyzedNode"],
 ) -> List[MemAccess]:
+    # Bare symbols should not be encountered here
+    assert not isinstance(expr, sympy.Symbol)
 
-    if isinstance(expr, sympy.Symbol):
-        decl_stmt = find_decl_stmt(loop_nest, expr.name)
-
+    if isinstance(expr, SymbolicScalar) and isinstance(expr.label, sympy.Symbol):
+        decl_stmt = find_decl_stmt(loop_nest, expr.label.name)
         return [
             MemAccess(
-                name=expr.name,
+                name=expr.label.name,
+                symbol=expr,
                 decl_stmt=decl_stmt,
                 index=sympy.Tuple(),
                 flat_index=sympy.Number(0),
@@ -80,12 +97,14 @@ def get_expr_mem_accesses(
         # Flatten the multi-dimensional index to a single integer
         flat_index = sympy.Number(0)
         shape = SympyShape(array)
+        assert len(shape.args) == len(index.args)
         for dim, idx in zip(shape.args, index.args):
             flat_index = flat_index * dim + idx
 
         return [
             MemAccess(
                 name=array_name,
+                symbol=array,
                 decl_stmt=decl_stmt,
                 index=index,
                 flat_index=flat_index,
@@ -104,6 +123,9 @@ def find_decl_stmt(
 ) -> Optional["AnalyzedNode"]:
     """Finds the declaration statement for a given variable name in the loop nest."""
     for loop in loop_nest[::-1]:
+        assert isinstance(loop.obj, ForLoop)
+        if name == loop.obj.index_var.label.name:
+            return loop
         for child in loop.children:
             if child.kind == "D":
                 assert isinstance(child.obj, Declaration)

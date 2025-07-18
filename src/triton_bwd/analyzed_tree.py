@@ -8,6 +8,8 @@ from triton_bwd.dependence_checking import dependence_levels
 from triton_bwd.flow_analysis import DefDict, flow_analysis
 from triton_bwd.mem_access import get_mem_accesses
 from triton_bwd.sympy_utils import (
+    FLOAT_TYPES,
+    INT_TYPES,
     SymbolicArray,
     SymbolicScalar,
     SympyDtype,
@@ -64,6 +66,16 @@ class AnalyzedNode:
             nest.insert(0, nest[0].parent)
         return nest
 
+    def find_stmt(
+        self, key: Union[AbstractNode, Tuple[str, int]]
+    ) -> Optional["AnalyzedNode"]:
+        """Finds a statement by its kind and number."""
+        numbered = [self, *self.descendants]
+        for stmt in numbered:
+            if stmt.obj is key or (stmt.kind, stmt.num) == key:
+                return stmt
+        return None
+
     def find_dependence(
         self,
         i: int,
@@ -71,14 +83,8 @@ class AnalyzedNode:
         on_vars: Optional[Set[str]] = None,
     ) -> Set[Tuple[str, int, str]]:
         """Finds dependencies between two assignments."""
-        numbered = [self, *self.descendants]
-
-        S = T = None
-        for stmt in numbered:
-            if (stmt.kind, stmt.num) == ("A", i):
-                S = stmt
-            if (stmt.kind, stmt.num) == ("A", j):
-                T = stmt
+        S = self.find_stmt(("A", i))
+        T = self.find_stmt(("A", j))
 
         S_stores, S_loads = get_mem_accesses(S)
         T_stores, T_loads = get_mem_accesses(T)
@@ -129,22 +135,16 @@ class AnalyzedNode:
         on_vars: Optional[Set[str]] = None,
     ) -> Set[Tuple[str, int, str]]:
         """Finds dependencies between two statements (loops or assignments)."""
-        numbered = [self, *self.descendants]
-
-        stmt_a = stmt_b = None
-        for idx, stmt in enumerate(numbered):
-            if stmt.obj is a or (stmt.kind, stmt.num) == a:
-                stmt_a = stmt
-            if stmt.obj is b or (stmt.kind, stmt.num) == b:
-                stmt_b = stmt
+        stmt_a = self.find_stmt(a)
+        stmt_b = self.find_stmt(b)
 
         if stmt_a is None:
             raise ValueError(f"Statement {a} not found in the tree")
         if stmt_b is None:
             raise ValueError(f"Statement {b} not found in the tree")
 
-        a_stmts = [stmt_a, *stmt_a.children]
-        b_stmts = [stmt_b, *stmt_b.children]
+        a_stmts = [stmt_a, *stmt_a.descendants]
+        b_stmts = [stmt_b, *stmt_b.descendants]
 
         a_asgn_indices = [stmt.num for stmt in a_stmts if stmt.kind == "A"]
         b_asgn_indices = [stmt.num for stmt in b_stmts if stmt.kind == "A"]
@@ -172,20 +172,14 @@ class AnalyzedNode:
 
     def fuse_loop(self, loop_idx_a: int, loop_idx_b: int) -> "AnalyzedNode":
         """Fuses two consecutive loops."""
-        new_tree = copy.deepcopy(self.obj)  # Ensure we don't modify the original tree
-
-        analyzed_tree = analyze_tree(new_tree)
-        numbered = [analyzed_tree, *analyzed_tree.descendants]
+        analyzed_tree = copy.deepcopy(self)  # Ensure we don't modify the original tree
+        new_tree = analyzed_tree.obj
 
         if loop_idx_b < loop_idx_a:
             loop_idx_a, loop_idx_b = loop_idx_b, loop_idx_a
 
-        stmt_a = stmt_b = None
-        for stmt in numbered:
-            if stmt.kind == "L" and stmt.num == loop_idx_a:
-                stmt_a = stmt
-            elif stmt.kind == "L" and stmt.num == loop_idx_b:
-                stmt_b = stmt
+        stmt_a = analyzed_tree.find_stmt(("L", loop_idx_a))
+        stmt_b = analyzed_tree.find_stmt(("L", loop_idx_b))
 
         if stmt_a is None or stmt_b is None:
             raise ValueError(f"Invalid loop indices:\n" + self.numbered_repr())
@@ -202,7 +196,7 @@ class AnalyzedNode:
         assert isinstance(stmt_a.obj, ForLoop) and isinstance(stmt_b.obj, ForLoop)
         loop_a, loop_b = stmt_a.obj, stmt_b.obj
 
-        if loop_a.index_var.name != loop_b.index_var.name:
+        if loop_a.index_var.label.name != loop_b.index_var.label.name:
             raise ValueError(
                 f"Loops L{loop_idx_a} and L{loop_idx_b} have different index variable names:\n"
                 + self.numbered_repr()
@@ -264,17 +258,11 @@ class AnalyzedNode:
 
     def localize_array_allocation(self, decl_idx: int, loop_idx: int) -> "AnalyzedNode":
         """Moves an array declaration one level inside a loop."""
-        new_tree = copy.deepcopy(self.obj)  # Ensure we don't modify the original tree
+        analyzed_tree = copy.deepcopy(self)  # Ensure we don't modify the original tree
+        new_tree = analyzed_tree.obj
 
-        analyzed_tree = analyze_tree(new_tree)
-        numbered = [analyzed_tree, *analyzed_tree.descendants]
-
-        decl = loop = None
-        for stmt in numbered:
-            if stmt.kind == "D" and stmt.num == decl_idx:
-                decl = stmt
-            elif stmt.kind == "L" and stmt.num == loop_idx:
-                loop = stmt
+        decl = analyzed_tree.find_stmt(("D", decl_idx))
+        loop = analyzed_tree.find_stmt(("L", loop_idx))
 
         if decl is None or loop is None:
             raise ValueError(
@@ -304,7 +292,6 @@ class AnalyzedNode:
                     )
 
         # Make sure there is no dependence on the loop
-        analyzed_tree = analyze_tree(new_tree)
         self_deps = analyzed_tree.find_stmt_dependence(
             ("L", loop_idx),
             ("L", loop_idx),
@@ -339,13 +326,13 @@ class AnalyzedNode:
 
         old_shape = array_symbol.shape.args
         new_shape = old_shape[:index_dim] + old_shape[index_dim + 1 :]
+        new_symbol = SymbolicArray(
+            array_name, array_symbol.dtype, sympy.Tuple(*new_shape)
+        )
 
         # Move the declaration inside the loop
         assert isinstance(loop.parent.obj, ForLoop)
         del loop.parent.obj.declarations[array_name]
-        new_symbol = SymbolicArray(
-            array_name, array_symbol.dtype, sympy.Tuple(*new_shape)
-        )
         loop.obj.declarations[array_name] = Declaration(array_name, new_symbol)
 
         # Update indices in the loop's statements
@@ -357,9 +344,39 @@ class AnalyzedNode:
             return SympyIndexing(array_symbol, new_index)
 
         for stmt in loop.descendants:
-            if stmt.kind == "A":
-                stmt.obj.target = stmt.obj.target.replace(pattern, update_index)
-                stmt.obj.value = stmt.obj.value.replace(pattern, update_index)
+            stmt.obj.exprs = [
+                expr.replace(pattern, update_index).replace(array_symbol, new_symbol)
+                for expr in stmt.obj.exprs
+            ]
+
+        return analyze_tree(new_tree)
+
+    def parallelize_loop(self, loop_idx: int) -> "AnalyzedNode":
+        """Parallelizes a loop by adding a parallel decorator."""
+        analyzed_tree = copy.deepcopy(self)  # Ensure we don't modify the original tree
+        new_tree = analyzed_tree.obj
+
+        loop = analyzed_tree.find_stmt(("L", loop_idx))
+
+        if loop is None:
+            raise ValueError(f"Invalid loop index: {loop_idx}\n" + self.numbered_repr())
+
+        for_loop = loop.obj
+        assert isinstance(for_loop, ForLoop)
+
+        self_deps = analyzed_tree.find_stmt_block_dependence(
+            for_loop.statements,
+            for_loop.statements,
+        )
+
+        for dep_kind, dep_level, dep_var in self_deps:
+            if dep_level == loop.level:
+                raise ValueError(
+                    f"Loop L{loop_idx} has a dependence at the same level {loop.level} "
+                    f"for variable `{dep_var}`:\n" + self.numbered_repr()
+                )
+
+        for_loop.is_kernel = True
 
         return analyze_tree(new_tree)
 
@@ -396,14 +413,74 @@ class AnalyzedNode:
                 raise ValueError(f"Unsupported backend: {backend}")
             return [], [f"{name} = {initializer}"]
 
+    def _generate_kernel(self, backend: str) -> Tuple[List[str], List[str]]:
+        assert isinstance(self.obj, ForLoop)
+        assert backend == "torch", "Nested kernels are not supported."
+
+        stores, loads = get_mem_accesses(self)
+        parameters = {}
+        for acc in stores + loads:
+            if acc.decl_stmt is None or acc.decl_stmt.level <= self.level:
+                dtype = SympyDtype(acc.symbol)
+                ndims = len(SympyShape(acc.symbol).args)
+                parameters[acc.name] = (dtype, ndims)
+
+        parameters = [
+            (name, dtype, ndims) for name, (dtype, ndims) in parameters.items()
+        ]
+        parameters.sort(
+            key=lambda x: (-x[2], str(x[1]), x[0])
+        )  # Sort by dims, dtype, then by name
+
+        param_list = []
+        for name, dtype, ndims in parameters:
+            if ndims == 0:
+                if dtype in INT_TYPES:
+                    param_list.append(f"{name}: int")
+                elif dtype in FLOAT_TYPES:
+                    param_list.append(f"{name}: float")
+                else:
+                    raise ValueError(f"Unsupported dtype: {dtype}")
+            else:
+                param_list.append(f"{name}")
+
+        kernel_function_name = f"kernel_function_L{self.num}"
+
+        code_lines = [
+            "@triton.jit",
+            f"def {kernel_function_name}({', '.join(param_list)}):",
+        ]
+
+        preamble = []
+        for child in self.children:
+            child_preamble, chld_code = child._generate_code_impl(backend)
+            preamble.extend(child_preamble)
+            for line in chld_code:
+                code_lines.append(f"    {line}")
+        code_lines.extend(["", ""])
+        preamble.extend(code_lines)
+
+        num_threads = (self.obj.index_end - self.obj.index_begin) // self.obj.index_step
+        arg_list = [name for name, dtype, ndims in parameters]
+        code_lines = [
+            f"{kernel_function_name}[({num_threads},)]({', '.join(arg_list)})"
+        ]
+        return preamble, code_lines
+
     def _generate_code_loop(self, backend: str) -> Tuple[List[str], List[str]]:
         assert isinstance(self.obj, ForLoop)
+        if self.obj.is_kernel:
+            return self._generate_kernel(backend)
+
         if self.parent is None:  # top-level loop
             arguments = []
 
             for arg in self.obj.arguments.values():
                 if isinstance(arg, SymbolicScalar):
-                    arguments.append(f"{arg.label.name}: {arg.dtype}")
+                    if arg.dtype in INT_TYPES:
+                        arguments.append(f"{arg.label.name}: int")
+                    elif arg.dtype in FLOAT_TYPES:
+                        arguments.append(f"{arg.label.name}: float")
                 elif isinstance(arg, SymbolicArray):
                     arguments.append(f"{arg.label.name}: torch.Tensor")
 

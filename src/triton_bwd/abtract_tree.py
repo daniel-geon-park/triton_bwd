@@ -15,11 +15,21 @@ class AbstractNode(abc.ABC):
         """Returns a string representation of the node."""
         ...
 
+    @property
+    @abc.abstractmethod
+    def exprs(self) -> List[sympy.Basic]:
+        """Returns a list of sympy expressions associated with this node."""
+        ...
+
+    @exprs.setter
+    @abc.abstractmethod
+    def exprs(self, value: List[sympy.Basic]):
+        """Sets the sympy expressions associated with this node."""
+        ...
+
 
 class Declaration(AbstractNode):
-    SymbolType = Union[SymbolicScalar, SymbolicArray]
-
-    def __init__(self, name: str, symbol: SymbolType):
+    def __init__(self, name: str, symbol: Union[SymbolicScalar, SymbolicArray]):
         super().__init__()
         self.name = name
         self.symbol = symbol
@@ -31,11 +41,25 @@ class Declaration(AbstractNode):
         else:
             return f"let {self.name}: array({', '.join(map(str, shape.args))})"
 
+    @property
+    def exprs(self) -> List[sympy.Basic]:
+        return [self.symbol]
+
+    @exprs.setter
+    def exprs(self, value: List[sympy.Basic]):
+        if len(value) != 1:
+            raise ValueError("Expected exactly 1 expression for Declaration.")
+        self.symbol = value[0]
+        if not isinstance(self.symbol, (SymbolicScalar, SymbolicArray)):
+            raise TypeError(
+                "Declaration symbol must be a SymbolicScalar or SymbolicArray."
+            )
+
 
 class ForLoop(AbstractNode):
     def __init__(
         self,
-        index_var: sympy.Symbol,
+        index_var: SymbolicScalar,
         index_begin: sympy.Basic,
         index_end: sympy.Basic,
         index_step: sympy.Basic,
@@ -67,6 +91,16 @@ class ForLoop(AbstractNode):
             + "\n".join(f"    {stmt_repr}" for stmt_repr in stmt_reprs)
         )
 
+    @property
+    def exprs(self) -> List[sympy.Basic]:
+        return [self.index_var, self.index_begin, self.index_end, self.index_step]
+
+    @exprs.setter
+    def exprs(self, value: List[sympy.Basic]):
+        if len(value) != 4:
+            raise ValueError("Expected exactly 4 expressions for ForLoop.")
+        self.index_var, self.index_begin, self.index_end, self.index_step = value
+
     def rename_index_var(self, new_name: str):
         """Renames the index variable of the loop."""
         self.index_var = sympy.Symbol(new_name, integer=True)
@@ -82,3 +116,13 @@ class Assignment(AbstractNode):
 
     def __repr__(self):
         return f"{self.target} = {self.value}"
+
+    @property
+    def exprs(self) -> List[sympy.Basic]:
+        return [self.target, self.value]
+
+    @exprs.setter
+    def exprs(self, value: List[sympy.Basic]):
+        if len(value) != 2:
+            raise ValueError("Expected exactly 2 expressions for Assignment.")
+        self.target, self.value = value

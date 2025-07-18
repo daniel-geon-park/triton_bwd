@@ -4,6 +4,7 @@ import sympy
 
 from triton_bwd.abtract_tree import ForLoop
 from triton_bwd.mem_access import MemAccess, get_expr_mem_accesses, get_mem_accesses
+from triton_bwd.sympy_utils import SymbolicArray, SymbolicScalar
 
 if TYPE_CHECKING:
     from triton_bwd.analyzed_tree import AnalyzedNode
@@ -13,11 +14,13 @@ def flow_analysis(node: "AnalyzedNode"):
     # Build the flow graph
     entry_block = BasicBlock("Entry")
     if isinstance(node.obj, ForLoop) and node.obj.arguments is not None:
-        for name in node.obj.arguments.keys():
+        for name, symbol in node.obj.arguments.items():
+            assert isinstance(symbol, (SymbolicScalar, SymbolicArray))
             entry_block.stores.extend(
                 [
                     MemAccess(
                         name=name,
+                        symbol=symbol,
                         decl_stmt=node,
                         index=sympy.Tuple(),
                         flat_index=sympy.Number(0),
@@ -181,7 +184,8 @@ def build_blocks(
             return build_blocks_body(node.children, start_blocks)
 
         idx_access = MemAccess(
-            name=node.obj.index_var.name,
+            name=node.obj.index_var.label.name,
+            symbol=node.obj.index_var,
             decl_stmt=node,
             index=sympy.Tuple(),
             flat_index=sympy.Number(0),
