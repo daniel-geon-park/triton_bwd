@@ -66,22 +66,32 @@ class OptimizableFunction:
 
         self.arg_specs = arg_specs
 
-        source = inspect.getsource(self.func)
-        tree = ast.parse(source)
-
-        # Parse the tree to create an abstract syntax tree
-        args = {name: spec.symbol() for name, spec in self.arg_specs.items()}
-        visitor = NodeVisitor(
-            call_stack=[self.func.__name__],
-            func_globals=self.func.__globals__,
-            args=args,
-        )
-        self.abstract_tree: AbstractNode = visitor.visit(tree)
+        # Lazy initialization
+        self._abstract_tree = None
+        self._analyzed_tree = None
 
     @property
-    def tree(self):
-        # Analyze the abstract tree to create a numbered statement tree
-        return analyze_tree(self.abstract_tree)
+    def abstract_tree(self) -> AbstractNode:
+        if self._abstract_tree is None:
+            source = inspect.getsource(self.func)
+            tree = ast.parse(source)
+
+            # Parse the tree to create an abstract syntax tree
+            args = {name: spec.symbol() for name, spec in self.arg_specs.items()}
+            visitor = NodeVisitor(
+                call_stack=[self.func.__name__],
+                func_globals=self.func.__globals__,
+                args=args,
+            )
+            self._abstract_tree: AbstractNode = visitor.visit(tree)
+        return self._abstract_tree
+
+    @property
+    def tree(self) -> AnalyzedNode:
+        if self._analyzed_tree is None:
+            # Analyze the abstract tree to create an analyzed tree
+            self._analyzed_tree: AnalyzedNode = analyze_tree(self.abstract_tree)
+        return self._analyzed_tree
 
     def __call__(self, *args, **kwargs):
         return self.func(*args, **kwargs)

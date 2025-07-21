@@ -403,6 +403,8 @@ class AnalyzedNode:
             return [], [f'{name}: "{str(dtype)}"']
         else:
             shape_str = ", ".join(map(str, shape.args))
+            if len(shape.args) == 1:
+                shape_str = f"{shape_str},"
             if backend == "torch":
                 dtype = f"torch.{str(dtype)}"
                 initializer = f"torch.zeros(({shape_str}), dtype={dtype})"
@@ -421,6 +423,8 @@ class AnalyzedNode:
         parameters = {}
         for acc in stores + loads:
             if acc.decl_stmt is None or acc.decl_stmt.level <= self.level:
+                if acc.decl_stmt is self:  # Is loop index
+                    continue
                 dtype = SympyDtype(acc.symbol)
                 ndims = len(SympyShape(acc.symbol).args)
                 parameters[acc.name] = (dtype, ndims)
@@ -449,11 +453,13 @@ class AnalyzedNode:
         code_lines = [
             "@triton.jit",
             f"def {kernel_function_name}({', '.join(param_list)}):",
+            f"    __pid = tl.program_id(0)",
+            f"    {self.obj.index_var} = {self.obj.index_begin + sympy.symbols('__pid') * self.obj.index_step}",
         ]
 
         preamble = []
         for child in self.children:
-            child_preamble, chld_code = child._generate_code_impl(backend)
+            child_preamble, chld_code = child._generate_code_impl("triton")
             preamble.extend(child_preamble)
             for line in chld_code:
                 code_lines.append(f"    {line}")
