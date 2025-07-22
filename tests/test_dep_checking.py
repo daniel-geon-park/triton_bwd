@@ -1,5 +1,6 @@
 import math
 
+from triton_bwd.code_gen import generate_code
 from triton_bwd.optimize import (
     Array,
     ArraySpec,
@@ -263,4 +264,4 @@ def test_optimize_attention():
 
     tree = tree.parallelize_loop(1)
 
-    print(tree.generate_code())
+    print(generate_code(tree))
