@@ -185,6 +185,8 @@ class SymbolicArray(sympy.Expr):
 
 
 class SympyIndexing(sympy.Function):
+    is_commutative = True
+
     @classmethod
     def eval(cls, array, index):
         pass
