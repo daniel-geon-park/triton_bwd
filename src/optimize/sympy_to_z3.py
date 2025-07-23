@@ -6,7 +6,7 @@ from sympy.core import Add, Expr, Mul, Number, Pow, Symbol
 from sympy.core.relational import Relational
 from z3 import Int, Real, Sqrt
 
-from triton_bwd.sympy_utils import SymbolicScalar
+from optimize.sympy_utils import SymbolicScalar
 
 
 def sympy_to_z3(sympy_exp: Union[Expr, Relational]):

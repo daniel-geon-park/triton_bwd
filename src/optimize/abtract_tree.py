@@ -3,7 +3,7 @@ from typing import Dict, List, Optional, Union
 
 import sympy
 
-from triton_bwd.sympy_utils import SymbolicArray, SymbolicScalar, SympyShape
+from optimize.sympy_utils import SymbolicArray, SymbolicScalar, SympyShape
 
 
 class AbstractNode(abc.ABC):

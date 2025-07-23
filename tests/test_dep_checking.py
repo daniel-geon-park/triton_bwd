@@ -1,14 +1,7 @@
 import math
 
-from triton_bwd.code_gen import generate_code
-from triton_bwd.optimize import (
-    Array,
-    ArraySpec,
-    InArray,
-    InOutArray,
-    OutArray,
-    optimize,
-)
+from optimize.code_gen import generate_code
+from optimize.optimize import Array, ArraySpec, InArray, InOutArray, OutArray, optimize
 
 
 @optimize(

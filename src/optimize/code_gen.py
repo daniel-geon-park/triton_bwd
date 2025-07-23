@@ -2,11 +2,11 @@ from typing import List, Tuple
 
 import sympy
 
-from triton_bwd.abtract_tree import Assignment, Declaration, ForLoop
-from triton_bwd.analyzed_tree import AnalyzedNode
-from triton_bwd.code_printer import CodePrinter
-from triton_bwd.mem_access import get_mem_accesses
-from triton_bwd.sympy_utils import (
+from optimize.abtract_tree import Assignment, Declaration, ForLoop
+from optimize.analyzed_tree import AnalyzedNode
+from optimize.code_printer import CodePrinter
+from optimize.mem_access import get_mem_accesses
+from optimize.sympy_utils import (
     FLOAT_TYPES,
     INT_TYPES,
     SymbolicArray,

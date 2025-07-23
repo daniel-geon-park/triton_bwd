@@ -2,8 +2,8 @@ from typing import TYPE_CHECKING, List, Optional, Tuple, Union
 
 import sympy
 
-from triton_bwd.abtract_tree import Assignment, Declaration, ForLoop
-from triton_bwd.sympy_utils import (
+from optimize.abtract_tree import Assignment, Declaration, ForLoop
+from optimize.sympy_utils import (
     SymbolicArray,
     SymbolicScalar,
     SympyIndexing,
@@ -11,7 +11,7 @@ from triton_bwd.sympy_utils import (
 )
 
 if TYPE_CHECKING:
-    from triton_bwd.analyzed_tree import AnalyzedNode
+    from optimize.analyzed_tree import AnalyzedNode
 
 
 class MemAccess:

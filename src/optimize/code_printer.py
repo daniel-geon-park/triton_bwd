@@ -1,6 +1,6 @@
 from sympy.printing.pycode import ArrayPrinter, PythonCodePrinter
 
-from triton_bwd.sympy_utils import SymbolicScalar, SympyIndexing
+from optimize.sympy_utils import SymbolicScalar, SympyIndexing
 
 torch_functions = {
     "exp": "torch.exp",

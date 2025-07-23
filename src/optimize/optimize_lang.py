@@ -3,7 +3,7 @@ from typing import Iterable, NewType, Optional, Union
 import numpy as np
 import sympy
 
-from triton_bwd.sympy_utils import SymbolicArray, SymbolicScalar
+from optimize.sympy_utils import SymbolicArray, SymbolicScalar
 
 
 class Array:

@@ -6,10 +6,10 @@ from typing import Any, Dict, List, Union
 
 import sympy
 
-from triton_bwd.abtract_tree import AbstractNode, Assignment, Declaration, ForLoop
-from triton_bwd.constexpr import Constexpr
-from triton_bwd.optimize_lang import Array
-from triton_bwd.sympy_utils import (
+from optimize.abtract_tree import AbstractNode, Assignment, Declaration, ForLoop
+from optimize.constexpr import Constexpr
+from optimize.optimize_lang import Array
+from optimize.sympy_utils import (
     TYPE_MAP,
     UNKNOWN_TYPES,
     SymbolicArray,

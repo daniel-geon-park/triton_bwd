@@ -3,10 +3,10 @@ import inspect
 from types import FunctionType
 from typing import Callable
 
-from triton_bwd.abtract_tree import *
-from triton_bwd.analyzed_tree import AnalyzedNode, analyze_tree
-from triton_bwd.node_visitor import NodeVisitor
-from triton_bwd.optimize_lang import *
+from optimize.abtract_tree import *
+from optimize.analyzed_tree import AnalyzedNode, analyze_tree
+from optimize.node_visitor import NodeVisitor
+from optimize.optimize_lang import *
 
 
 class OptimizableFunction:

@@ -3,11 +3,11 @@ from typing import List, Optional, Set, Tuple, Union
 
 import sympy
 
-from triton_bwd.abtract_tree import AbstractNode, Assignment, Declaration, ForLoop
-from triton_bwd.dependence_checking import dependence_levels
-from triton_bwd.flow_analysis import DefDict, flow_analysis
-from triton_bwd.mem_access import get_mem_accesses
-from triton_bwd.sympy_utils import SymbolicArray, SympyIndexing, SympyShape
+from optimize.abtract_tree import AbstractNode, Assignment, Declaration, ForLoop
+from optimize.dependence_checking import dependence_levels
+from optimize.flow_analysis import DefDict, flow_analysis
+from optimize.mem_access import get_mem_accesses
+from optimize.sympy_utils import SymbolicArray, SympyIndexing, SympyShape
 
 
 class AnalyzedNode:

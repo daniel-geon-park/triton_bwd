@@ -2,12 +2,12 @@ from typing import TYPE_CHECKING, Dict, List, Optional, Set, Tuple
 
 import sympy
 
-from triton_bwd.abtract_tree import ForLoop
-from triton_bwd.mem_access import MemAccess, get_expr_mem_accesses, get_mem_accesses
-from triton_bwd.sympy_utils import SymbolicArray, SymbolicScalar
+from optimize.abtract_tree import ForLoop
+from optimize.mem_access import MemAccess, get_expr_mem_accesses, get_mem_accesses
+from optimize.sympy_utils import SymbolicArray, SymbolicScalar
 
 if TYPE_CHECKING:
-    from triton_bwd.analyzed_tree import AnalyzedNode
+    from optimize.analyzed_tree import AnalyzedNode
 
 
 def flow_analysis(node: "AnalyzedNode"):

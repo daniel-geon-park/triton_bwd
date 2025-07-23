@@ -6,10 +6,10 @@ import sympy
 import z3
 from sympy.solvers.solveset import linear_coeffs
 
-from triton_bwd.sympy_to_z3 import sympy_to_z3
+from optimize.sympy_to_z3 import sympy_to_z3
 
 if TYPE_CHECKING:
-    from triton_bwd.abtract_tree import ForLoop
+    from optimize.abtract_tree import ForLoop
 
 
 total_time = 0
