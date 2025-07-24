@@ -248,6 +248,59 @@ class AnalyzedNode:
 
         return analyzed_tree
 
+    def split_loop(self, split_after: Tuple[str, int]) -> "AnalyzedNode":
+        """Splits a loop into two loops at the given index."""
+        analyzed_tree = copy.deepcopy(self)
+        new_tree = analyzed_tree.obj
+
+        stmt = analyzed_tree.find_stmt(split_after)
+        if stmt.level <= 1:
+            raise ValueError(
+                f"Cannot split top-level loop at {split_after}:\n"
+                + self.numbered_repr()
+            )
+
+        parent_loop = stmt.parent
+        assert isinstance(parent_loop.obj, ForLoop)
+        assert isinstance(parent_loop.parent.obj, ForLoop)
+
+        stmt_index = parent_loop.obj.statements.index(stmt.obj)
+        if stmt_index == len(parent_loop.obj.statements) - 1:
+            raise ValueError(
+                f"Cannot split loop after the last statement at {split_after}:\n"
+                + self.numbered_repr()
+            )
+
+        stmts_before = parent_loop.obj.statements[: stmt_index + 1]
+        stmts_after = parent_loop.obj.statements[stmt_index + 1 :]
+        deps = analyzed_tree.find_stmt_block_dependence(
+            stmts_after,
+            stmts_before,
+        )
+
+        for dep_kind, level, var_name in deps:
+            if level == parent_loop.level:
+                raise ValueError(
+                    f"Cannot split loop at {split_after} due to a dependence at "
+                    f"the same level {level} for variable `{var_name}`:\n"
+                    + self.numbered_repr()
+                )
+
+        # Create the new loop with the statements after the split point
+        parent_loop.obj.statements = stmts_before
+        new_loop = ForLoop(
+            index_var=parent_loop.obj.index_var,
+            index_begin=parent_loop.obj.index_begin,
+            index_end=parent_loop.obj.index_end,
+            index_step=parent_loop.obj.index_step,
+            declarations=copy.deepcopy(parent_loop.obj.declarations),
+            statements=stmts_after,
+        )
+        loop_index = parent_loop.parent.obj.statements.index(parent_loop.obj)
+        parent_loop.parent.obj.statements.insert(loop_index + 1, new_loop)
+
+        return analyze_tree(new_tree)
+
     def localize_array_allocation(self, decl_idx: int, loop_idx: int) -> "AnalyzedNode":
         """Moves an array declaration one level inside a loop."""
         analyzed_tree = copy.deepcopy(self)  # Ensure we don't modify the original tree

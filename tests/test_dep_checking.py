@@ -172,6 +172,98 @@ def test_fuse_loop():
 
 @optimize(
     {
+        "a": ArraySpec(
+            dtype="float32",
+            dims=(
+                "M",
+                "N",
+            ),
+        ),
+        "b": ArraySpec(
+            dtype="float32",
+            dims=(
+                "M",
+                "N",
+            ),
+        ),
+        "c": ArraySpec(
+            dtype="float32",
+            dims=(
+                "M",
+                "N",
+            ),
+        ),
+    }
+)
+def example4(
+    a: InOutArray,
+    b: InOutArray,
+    c: InOutArray,
+    M: int,
+    N: int,
+):
+    for i in range(M - 1):
+        for j in range(N):
+            a[i, j] = b[i, j] + 1
+            c[i, j] = a[i + 1, j] + a[i, j] + b[i, j]
+
+
+def test_split_loop():
+    print(example4.tree.numbered_repr())
+    tree = example4.tree.split_loop(("A", 0))
+    print("Split result:", tree.numbered_repr(), sep="\n")
+
+
+@optimize(
+    {
+        "a": ArraySpec(
+            dtype="float32",
+            dims=(
+                "M",
+                "N",
+            ),
+        ),
+        "b": ArraySpec(
+            dtype="float32",
+            dims=(
+                "M",
+                "N",
+            ),
+        ),
+        "c": ArraySpec(
+            dtype="float32",
+            dims=(
+                "M",
+                "N",
+            ),
+        ),
+    }
+)
+def example5(
+    a: InOutArray,
+    b: InOutArray,
+    c: InOutArray,
+    M: int,
+    N: int,
+):
+    for i in range(M - 1):
+        for j in range(N - 1):
+            a[i, j] = b[i, j] + 1
+            c[i, j] = a[i + 1, j] + a[i, j + 1] + b[i, j]
+
+
+def test_split_loop_2():
+    print(example5.tree.numbered_repr())
+    try:
+        tree = example5.tree.split_loop(("A", 0))
+    except ValueError as e:
+        print(f"Expected error: {e}")
+    else:
+        raise AssertionError("Expected a ValueError due to non-splittable loops.")
+
+
+@optimize(
+    {
         "q": ArraySpec(dtype="float32", dims=("B", "H", "T_Q", "D")),
         "k": ArraySpec(dtype="float32", dims=("B", "H", "T_KV", "D")),
         "v": ArraySpec(dtype="float32", dims=("B", "H", "T_KV", "D")),
@@ -255,6 +347,6 @@ def test_optimize_attention():
     print("\nAfter localize_array_allocation:")
     print(tree.numbered_repr())
 
-    tree = tree.parallelize_loop(1)
+    # tree = tree.parallelize_loop(1)
 
     print(generate_code(tree))
