@@ -348,5 +348,9 @@ def test_optimize_attention():
     print(tree.numbered_repr())
 
     # tree = tree.parallelize_loop(1)
+    tree = tree.tile_loop(3, 16)
+    tree = tree.tile_loop(6, 16)
+    print("\nAfter tile_loop:")
+    print(tree.numbered_repr())
 
     print(generate_code(tree))

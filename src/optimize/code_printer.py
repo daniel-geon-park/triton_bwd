@@ -5,11 +5,15 @@ from optimize.sympy_utils import SymbolicScalar, SympyIndexing
 torch_functions = {
     "exp": "torch.exp",
     "sqrt": "torch.sqrt",
+    "Max": "torch.maximum",
+    "Min": "torch.minimum",
 }
 
 triton_functions = {
     "exp": "tl.exp",
     "sqrt": "tl.sqrt",
+    "Max": "tl.maximum",
+    "Min": "tl.minimum",
 }
 
 

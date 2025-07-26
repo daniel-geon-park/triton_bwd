@@ -77,45 +77,56 @@ def prove_independence(
     for level in range(num_common_loops):
         ik = sympy.symbols(f"__i{level}", integer=True)
         jk = sympy.symbols(f"__j{level}", integer=True)
+
+        pk = nest_s[level].index_begin
+        qk = nest_s[level].index_end
+        sk = nest_t[level].index_step
+        ik, jk = ik * sk, jk * sk
+
         iks.append(ik)
         jks.append(jk)
 
-        ak = ai[level]
-        bk = bi[level]
+        ak, bk = ai[level], bi[level]
         lhs = lhs + ak * ik - bk * jk
 
-        pk = nest_s[level].index_begin
-        qk = nest_s[level].index_end - 1
-        constraints.extend([pk <= ik, ik <= qk])
-        constraints.extend([pk <= jk, jk <= qk])
+        constraints.extend([pk <= ik, ik < qk])
+        constraints.extend([pk <= jk, jk < qk])
 
     for level in range(num_common_loops, len(ai)):
         ik = sympy.symbols(f"__i{level}", integer=True)
+
+        pk = nest_s[level].index_begin
+        qk = nest_s[level].index_end
+        sk = nest_s[level].index_step
+        ik = ik * sk
+
         iks.append(ik)
 
         ak = ai[level]
         lhs = lhs + ak * ik
 
-        pk = nest_s[level].index_begin
-        qk = nest_s[level].index_end - 1
-        constraints.extend([pk <= ik, ik <= qk])
+        constraints.extend([pk <= ik, ik < qk])
 
     for level in range(num_common_loops, len(bi)):
         jk = sympy.symbols(f"__j{level}", integer=True)
+
+        pk = nest_t[level].index_begin
+        qk = nest_t[level].index_end
+        sk = nest_t[level].index_step
+        jk = jk * sk
+
         jks.append(jk)
 
         bk = bi[level]
         lhs = lhs - bk * jk
 
-        pk = nest_t[level].index_begin
-        qk = nest_t[level].index_end - 1
-        constraints.extend([pk <= jk, jk <= qk])
+        constraints.extend([pk <= jk, jk < qk])
 
     u = sympy.symbols("__u", integer=True)
     for level in range(num_common_loops):
         ik, jk = iks[level], jks[level]
-        constraints.append(sympy.Implies(level <= u - 1, sympy.Eq(ik, jk)))  # s = 0
-        constraints.append(sympy.Implies(sympy.Eq(level, u), ik <= jk - 1))  # s = 1
+        constraints.append(sympy.Implies(level < u, sympy.Eq(ik, jk)))  # s = 0
+        constraints.append(sympy.Implies(sympy.Eq(level, u), ik < jk))  # s = 1
 
     lhs, _ = sympy_to_z3(lhs)
     constraints = [sympy_to_z3(c)[0] for c in constraints]

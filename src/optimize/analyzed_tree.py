@@ -2,12 +2,19 @@ import copy
 from typing import List, Optional, Set, Tuple, Union
 
 import sympy
+from sympy.solvers.solveset import NonlinearError, linear_coeffs
 
 from optimize.abtract_tree import AbstractNode, Assignment, Declaration, ForLoop
 from optimize.dependence_checking import dependence_levels
 from optimize.flow_analysis import DefDict, flow_analysis
 from optimize.mem_access import get_mem_accesses
-from optimize.sympy_utils import SymbolicArray, SympyIndexing, SympyShape
+from optimize.sympy_utils import (
+    SymbolicArray,
+    SymbolicScalar,
+    SympyDtype,
+    SympyIndexing,
+    SympyShape,
+)
 
 
 class AnalyzedNode:
@@ -254,6 +261,11 @@ class AnalyzedNode:
         new_tree = analyzed_tree.obj
 
         stmt = analyzed_tree.find_stmt(split_after)
+        if stmt is None:
+            raise ValueError(
+                f"Invalid split point {split_after}:\n" + self.numbered_repr()
+            )
+
         if stmt.level <= 1:
             raise ValueError(
                 f"Cannot split top-level loop at {split_after}:\n"
@@ -393,6 +405,89 @@ class AnalyzedNode:
                 expr.replace(pattern, update_index).replace(array_symbol, new_symbol)
                 for expr in stmt.obj.exprs
             ]
+
+        return analyze_tree(new_tree)
+
+    def tile_loop(
+        self, loop_idx: int, tile_size: Union[int, sympy.Basic]
+    ) -> "AnalyzedNode":
+        """Tiles a loop by adding a new loop with the given tile size."""
+        analyzed_tree = copy.deepcopy(self)
+        new_tree = analyzed_tree.obj
+
+        loop = analyzed_tree.find_stmt(("L", loop_idx))
+        if loop is None:
+            raise ValueError(f"Invalid loop index: {loop_idx}\n" + self.numbered_repr())
+
+        if loop.parent is None:
+            raise ValueError(
+                f"Loop L{loop_idx} is at the top level and cannot be tiled:\n"
+                + self.numbered_repr()
+            )
+
+        for_loop = loop.obj
+        assert isinstance(for_loop, ForLoop)
+
+        # Check if the tile size is valid
+        if not isinstance(tile_size, sympy.Basic):
+            tile_size = sympy.sympify(tile_size)
+
+        if tile_size.is_integer is not True or tile_size.is_positive is not True:
+            raise ValueError(
+                f"Invalid tile size: {tile_size}. It must be an positive integer expression."
+            )
+
+        loop_nest = loop.loop_nest()
+        ancestor_index_vars = [anc.obj.index_var for anc in loop_nest]
+
+        try:
+            *bi, b0 = linear_coeffs(for_loop.index_begin, *ancestor_index_vars)
+            *ei, e0 = linear_coeffs(for_loop.index_end, *ancestor_index_vars)
+            *si, s0 = linear_coeffs(for_loop.index_step, *ancestor_index_vars)
+        except NonlinearError:
+            raise ValueError(
+                f"Loop L{loop_idx} has a nonlinear index range, cannot tile:\n"
+                + self.numbered_repr()
+            )
+
+        for sk in si:
+            if sk != 0:
+                raise ValueError(
+                    f"Loop L{loop_idx}'s step size {sk} depends on an ancestor index, cannot tile:\n"
+                    + self.numbered_repr()
+                )
+
+        orig_index_var = for_loop.index_var
+        orig_step_size = for_loop.index_step
+        assert orig_step_size.is_positive is True
+
+        outer_index_begin = for_loop.index_begin
+        outer_index_end = for_loop.index_end
+        outer_index_var = SymbolicScalar(
+            f"__tile_{orig_index_var.label.name}_outer", SympyDtype(orig_index_var)
+        )
+
+        inner_index_begin = sympy.Max(outer_index_var, for_loop.index_begin)
+        inner_index_end = sympy.Min(
+            outer_index_var + orig_step_size * (tile_size - 1) + 1, for_loop.index_end
+        )
+
+        for_loop.index_var = outer_index_var
+        for_loop.index_step = for_loop.index_step * tile_size
+        for_loop.index_begin = outer_index_begin
+        for_loop.index_end = outer_index_end
+        for_loop.statements = [
+            ForLoop(
+                index_var=orig_index_var,
+                index_begin=inner_index_begin,
+                index_end=inner_index_end,
+                index_step=orig_step_size,
+                declarations=for_loop.declarations,
+                statements=for_loop.statements,
+                is_kernel=for_loop.is_kernel,
+            )
+        ]
+        for_loop.declarations = {}
 
         return analyze_tree(new_tree)
 

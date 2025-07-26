@@ -82,7 +82,7 @@ class SymbolicScalar(sympy.Expr):
         obj._assumptions = StdFactKB(assumptions)
         obj._assumptions._generator = tmp_asm_copy  # Issue #8873
 
-    def __new__(cls, name: Union[sympy.Basic, str], dtype: str):
+    def __new__(cls, name: Union[sympy.Basic, str], dtype: Union[sympy.Basic, str]):
         if isinstance(dtype, str):
             if dtype not in TYPE_MAP:
                 raise ValueError(f"Unsupported dtype: {dtype}")
@@ -99,10 +99,7 @@ class SymbolicScalar(sympy.Expr):
                 symbol = sympy.symbols(name, real=True)
 
         obj = sympy.Expr.__new__(cls, symbol, dtype)
-        if dtype in INT_TYPES:
-            cls._set_assumptions(obj, {"integer": True})
-        elif dtype in FLOAT_TYPES:
-            cls._set_assumptions(obj, {"real": True})
+        cls._set_assumptions(obj, symbol._assumptions)
         return obj
 
     @property
@@ -158,10 +155,7 @@ class SymbolicArray(sympy.Expr):
             sympy.sympify(shape),
             is_placeholder,
         )
-        if dtype in INT_TYPES:
-            cls._set_assumptions(obj, {"integer": True})
-        elif dtype in FLOAT_TYPES:
-            cls._set_assumptions(obj, {"real": True})
+        cls._set_assumptions(obj, symbol._assumptions)
         return obj
 
     @property

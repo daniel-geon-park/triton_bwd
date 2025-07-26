@@ -69,7 +69,9 @@ class ForLoop(AbstractNode):
         arguments: Optional[Dict[str, sympy.Basic]] = None,
     ):
         super().__init__()
-        assert index_step == 1, "Only step size of 1 is supported for now."
+        assert (
+            index_step.is_positive is True
+        ), "Only positive step size is supported for now."
         self.index_var = index_var
         self.index_begin = index_begin
         self.index_end = index_end
