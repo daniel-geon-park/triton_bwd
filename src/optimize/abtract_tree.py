@@ -35,11 +35,10 @@ class Declaration(AbstractNode):
         self.symbol = symbol
 
     def __repr__(self) -> str:
-        shape = SympyShape(self.symbol)
-        if shape == ():
+        if isinstance(self.symbol, SymbolicScalar):
             return f"let {self.name}: scalar"
-        else:
-            return f"let {self.name}: array({', '.join(map(str, shape.args))})"
+        shape = SympyShape(self.symbol)
+        return f"let {self.name}: array({', '.join(map(str, shape.args))})"
 
     @property
     def exprs(self) -> List[sympy.Basic]:

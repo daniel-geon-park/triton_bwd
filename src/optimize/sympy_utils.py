@@ -188,7 +188,10 @@ class SympyIndexing(sympy.Function):
     def _sympystr(self, printer):
         array, index = self.args
         if isinstance(index, sympy.Tuple):
-            index_str = ", ".join(printer.doprint(i) for i in index)
+            if len(index.args) == 0:
+                index_str = "()"
+            else:
+                index_str = ", ".join(printer.doprint(i) for i in index)
         else:
             index_str = printer.doprint(index)
         return printer.doprint(array) + "[" + index_str + "]"

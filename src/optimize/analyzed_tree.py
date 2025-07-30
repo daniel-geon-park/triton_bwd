@@ -396,6 +396,8 @@ class AnalyzedNode:
         pattern = SympyIndexing(array_symbol, sympy.Wild("index"))
 
         def update_index(index):
+            if not isinstance(index, sympy.Tuple):
+                index = sympy.Tuple(index)
             new_index = index.args[:index_dim] + index.args[index_dim + 1 :]
             new_index = sympy.Tuple(*new_index)
             return SympyIndexing(array_symbol, new_index)
@@ -555,11 +557,6 @@ def _analyze_tree_impl(
         )
 
     elif isinstance(node, Declaration):
-        shape = SympyShape(node.symbol)
-        if shape == ():
-            text = f"let {node.name}: scalar"
-        else:
-            text = f"let {node.name}: array({', '.join(map(str, shape.args))})"
         return (
             AnalyzedNode(
                 kind="D",
@@ -571,7 +568,7 @@ def _analyze_tree_impl(
                 descendants=[],
                 predecessors=None,
                 successors=None,
-                text="    " * level + text,
+                text="    " * level + repr(node),
             ),
             asgn_idx,
             decl_idx + 1,

@@ -319,11 +319,14 @@ def test_optimize_attention():
     tree = tree.fuse_loop(1, 7)
     tree = tree.fuse_loop(1, 8)
 
-    # 2 TILE LOOP iq
-    tree = tree.tile_loop(1, 32)
-
-    # 3 LOCALIZE ARRAYS
+    # 2 LOCALIZE ARRAYS
     tree = tree.localize_array_allocation(0, 1)
+    tree = tree.localize_array_allocation(0, 1)
+    tree = tree.localize_array_allocation(0, 1)
+    tree = tree.localize_array_allocation(0, 1)
+
+    # 3 TILE LOOP iq
+    tree = tree.tile_loop(1, 32)
 
     print("End result:")
     print(tree.numbered_repr())
