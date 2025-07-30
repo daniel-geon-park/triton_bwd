@@ -313,7 +313,7 @@ class AnalyzedNode:
 
         return analyze_tree(new_tree)
 
-    def localize_array_allocation(self, decl_idx: int, loop_idx: int) -> "AnalyzedNode":
+    def move_array_inside(self, decl_idx: int, loop_idx: int) -> "AnalyzedNode":
         """Moves an array declaration one level inside a loop."""
         analyzed_tree = copy.deepcopy(self)  # Ensure we don't modify the original tree
         new_tree = analyzed_tree.obj

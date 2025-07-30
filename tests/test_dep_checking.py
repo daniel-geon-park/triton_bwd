@@ -320,13 +320,15 @@ def test_optimize_attention():
     tree = tree.fuse_loop(1, 8)
 
     # 2 LOCALIZE ARRAYS
-    tree = tree.localize_array_allocation(0, 1)
-    tree = tree.localize_array_allocation(0, 1)
-    tree = tree.localize_array_allocation(0, 1)
-    tree = tree.localize_array_allocation(0, 1)
+    tree = tree.move_array_inside(0, 1)
+    tree = tree.move_array_inside(0, 1)
+    tree = tree.move_array_inside(0, 1)
+    tree = tree.move_array_inside(0, 1)
 
     # 3 TILE LOOP iq
     tree = tree.tile_loop(1, 32)
+
+    # 4 TODO: MOVE ARRAY OUTSIDE
 
     print("End result:")
     print(tree.numbered_repr())
