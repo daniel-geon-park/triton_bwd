@@ -357,7 +357,7 @@ class AnalyzedNode:
         for dep_kind, dep_level, dep_var in self_deps:
             if dep_var == array_name and dep_level == loop.level:
                 raise ValueError(
-                    f"Variable in D{decl_idx} has a dependence on L{loop_idx} at "
+                    f"Variable '{array_name}' in D{decl_idx} has a dependence on L{loop_idx} at "
                     f"the same level {loop.level}:\n" + self.numbered_repr()
                 )
 
@@ -369,7 +369,7 @@ class AnalyzedNode:
             if (acc.name, acc.decl_stmt) == (array_name, decl):
                 if index_var not in acc.index.args:
                     raise ValueError(
-                        f"Variable is not indexed by the loop's index variable {index_var}"
+                        f"Variable is not indexed by the loop's index variable {index_var} "
                         f"in a statement inside the loop:\n" + self.numbered_repr()
                     )
                 cur_index_dim = acc.index.args.index(index_var)

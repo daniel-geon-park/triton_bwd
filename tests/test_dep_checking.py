@@ -312,11 +312,18 @@ def test_optimize_attention():
     tree = attention.tree
     print(tree.numbered_repr())
 
+    # 1 MERGE LOOPS
     tree = tree.fuse_loop(1, 3)
     tree = tree.fuse_loop(1, 5)
     tree = tree.fuse_loop(1, 6)
     tree = tree.fuse_loop(1, 7)
     tree = tree.fuse_loop(1, 8)
 
-    print("End result:\n")
+    # 2 TILE LOOP iq
+    tree = tree.tile_loop(1, 32)
+
+    # 3 LOCALIZE ARRAYS
+    tree = tree.localize_array_allocation(0, 1)
+
+    print("End result:")
     print(tree.numbered_repr())

@@ -74,14 +74,25 @@ def prove_independence(
     iks, jks = [], []
     constraints = []
 
+    def rep(expr, nest, loop_indices):
+        # Replace the loop index variables in the expression with __i{level} or __j{level}
+        for lvl, loop in enumerate(nest):
+            expr = expr.replace(loop.index_var, loop_indices[lvl])
+        return expr
+
     for level in range(num_common_loops):
         ik = sympy.symbols(f"__i{level}", integer=True)
         jk = sympy.symbols(f"__j{level}", integer=True)
 
-        pk = nest_s[level].index_begin
-        qk = nest_s[level].index_end
-        sk = nest_t[level].index_step
-        ik, jk = ik * sk, jk * sk
+        pk_s = rep(nest_s[level].index_begin, nest_s[:level], iks)
+        qk_s = rep(nest_s[level].index_end, nest_s[:level], iks)
+        sk_s = rep(nest_s[level].index_step, nest_s[:level], iks)
+
+        pk_t = rep(nest_t[level].index_begin, nest_t[:level], jks)
+        qk_t = rep(nest_t[level].index_end, nest_t[:level], jks)
+        sk_t = rep(nest_t[level].index_step, nest_t[:level], jks)
+
+        ik, jk = ik * sk_s, jk * sk_t
 
         iks.append(ik)
         jks.append(jk)
@@ -89,38 +100,38 @@ def prove_independence(
         ak, bk = ai[level], bi[level]
         lhs = lhs + ak * ik - bk * jk
 
-        constraints.extend([pk <= ik, ik < qk])
-        constraints.extend([pk <= jk, jk < qk])
+        constraints.extend([pk_s <= ik, ik < qk_s])
+        constraints.extend([pk_t <= jk, jk < qk_t])
 
     for level in range(num_common_loops, len(ai)):
         ik = sympy.symbols(f"__i{level}", integer=True)
 
-        pk = nest_s[level].index_begin
-        qk = nest_s[level].index_end
-        sk = nest_s[level].index_step
-        ik = ik * sk
+        pk_s = rep(nest_s[level].index_begin, nest_s[:level], iks)
+        qk_s = rep(nest_s[level].index_end, nest_s[:level], iks)
+        sk_s = rep(nest_s[level].index_step, nest_s[:level], iks)
+        ik = ik * sk_s
 
         iks.append(ik)
 
         ak = ai[level]
         lhs = lhs + ak * ik
 
-        constraints.extend([pk <= ik, ik < qk])
+        constraints.extend([pk_s <= ik, ik < qk_s])
 
     for level in range(num_common_loops, len(bi)):
         jk = sympy.symbols(f"__j{level}", integer=True)
 
-        pk = nest_t[level].index_begin
-        qk = nest_t[level].index_end
-        sk = nest_t[level].index_step
-        jk = jk * sk
+        pk_t = rep(nest_t[level].index_begin, nest_t[:level], jks)
+        qk_t = rep(nest_t[level].index_end, nest_t[:level], jks)
+        sk_t = rep(nest_t[level].index_step, nest_t[:level], jks)
+        jk = jk * sk_t
 
         jks.append(jk)
 
         bk = bi[level]
         lhs = lhs - bk * jk
 
-        constraints.extend([pk <= jk, jk < qk])
+        constraints.extend([pk_t <= jk, jk < qk_t])
 
     u = sympy.symbols("__u", integer=True)
     for level in range(num_common_loops):

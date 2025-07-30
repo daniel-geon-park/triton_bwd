@@ -1,15 +1,13 @@
-from typing import Union
+from typing import Dict, Union
 
 import sympy
 import z3
-from sympy.core import Add, Expr, Mul, Number, Pow, Symbol
 from sympy.core.relational import Relational
-from z3 import Int, Real, Sqrt
 
 from optimize.sympy_utils import SymbolicScalar
 
 
-def sympy_to_z3(sympy_exp: Union[Expr, Relational]):
+def sympy_to_z3(sympy_exp: Union[sympy.Expr, Relational]):
     """convert a sympy expression to a z3 expression. This returns (z3_vars, z3_expression)"""
 
     if isinstance(sympy_exp, Relational):
@@ -49,9 +47,9 @@ def sympy_to_z3(sympy_exp: Union[Expr, Relational]):
     for var in sympy_var_list:
         name = var.name
         if var.is_integer:
-            z3_var = Int(name)
+            z3_var = z3.Int(name)
         else:
-            z3_var = Real(name)
+            z3_var = z3.Real(name)
         z3_var_map[name] = z3_var
         z3_vars.append(z3_var)
 
@@ -60,14 +58,14 @@ def sympy_to_z3(sympy_exp: Union[Expr, Relational]):
     return result_exp, z3_vars
 
 
-def _sympy_to_z3_rec(var_map, e):
+def _sympy_to_z3_rec(var_map: Dict[str, z3.ArithRef], e: sympy.Expr) -> z3.ArithRef:
     """recursive call for sympy_to_z3()"""
     rv = None
 
-    if not isinstance(e, Expr):
+    if not isinstance(e, sympy.Expr):
         raise RuntimeError("Expected sympy Expr: " + repr(e))
 
-    if isinstance(e, Symbol):
+    if isinstance(e, sympy.Symbol):
         rv = var_map.get(e.name)
         if rv is None:
             raise RuntimeError("No var was corresponds to symbol '" + str(e) + "'")
@@ -75,26 +73,38 @@ def _sympy_to_z3_rec(var_map, e):
     elif isinstance(e, SymbolicScalar):
         rv = _sympy_to_z3_rec(var_map, e.label)
 
-    elif isinstance(e, Number):
+    elif isinstance(e, sympy.Number):
         rv = int(e) if e.is_integer else float(e)
 
-    elif isinstance(e, Mul):
+    elif isinstance(e, sympy.Mul):
         rv = _sympy_to_z3_rec(var_map, e.args[0])
         for child in e.args[1:]:
             rv *= _sympy_to_z3_rec(var_map, child)
 
-    elif isinstance(e, Add):
+    elif isinstance(e, sympy.Add):
         rv = _sympy_to_z3_rec(var_map, e.args[0])
         for child in e.args[1:]:
             rv += _sympy_to_z3_rec(var_map, child)
 
-    elif isinstance(e, Pow):
+    elif isinstance(e, sympy.Pow):
         term = _sympy_to_z3_rec(var_map, e.args[0])
         exponent = _sympy_to_z3_rec(var_map, e.args[1])
         if exponent == 0.5:
-            rv = Sqrt(term)
+            rv = z3.Sqrt(term)
         else:
             rv = term**exponent
+
+    elif isinstance(e, sympy.Max):
+        assert len(e.args) == 2, "Max function only supports two arguments"
+        left = _sympy_to_z3_rec(var_map, e.args[0])
+        right = _sympy_to_z3_rec(var_map, e.args[1])
+        rv = z3.If(left >= right, left, right)
+
+    elif isinstance(e, sympy.Min):
+        assert len(e.args) == 2, "Min function only supports two arguments"
+        left = _sympy_to_z3_rec(var_map, e.args[0])
+        right = _sympy_to_z3_rec(var_map, e.args[1])
+        rv = z3.If(left <= right, left, right)
 
     if rv is None:
         raise RuntimeError(
