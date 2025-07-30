@@ -264,10 +264,10 @@ def test_split_loop_2():
 
 @optimize(
     {
-        "q": ArraySpec(dtype="float32", dims=("B", "H", "T_Q", "D")),
-        "k": ArraySpec(dtype="float32", dims=("B", "H", "T_KV", "D")),
-        "v": ArraySpec(dtype="float32", dims=("B", "H", "T_KV", "D")),
-        "o": ArraySpec(dtype="float32", dims=("B", "H", "T_Q", "D")),
+        "q": ArraySpec(dtype="float32", dims=("T_Q", "D")),
+        "k": ArraySpec(dtype="float32", dims=("T_KV", "D")),
+        "v": ArraySpec(dtype="float32", dims=("T_KV", "D")),
+        "o": ArraySpec(dtype="float32", dims=("T_Q", "D")),
     }
 )
 def attention(
@@ -275,82 +275,48 @@ def attention(
     k: InArray,
     v: InArray,
     o: OutArray,
-    B: int,
-    H: int,
     T_Q: int,
     T_KV: int,
     D: int,
 ):
-    l = Array(dtype="float32", dims=(B, H, T_Q))
-    for b in range(B):
-        for h in range(H):
-            for iq in range(T_Q):
-                l[b, h, iq] = 0.0
-                for d in range(D):
-                    o[b, h, iq, d] = 0.0
-    scores = Array(dtype="float32", dims=(B, H, T_Q, T_KV))
-    for b in range(B):
-        for h in range(H):
-            for iq in range(T_Q):
-                for ik in range(T_KV):
-                    s: "float32" = 0
-                    for d in range(D):
-                        s += q[b, h, iq, d] * k[b, h, ik, d]
-                    scores[b, h, iq, ik] = s
-    for b in range(B):
-        for h in range(H):
-            for iq in range(T_Q):
-                for ik in range(T_KV):
-                    l[b, h, iq] += math.exp(scores[b, h, iq, ik])
-    probs = Array(dtype="float32", dims=(B, H, T_Q, T_KV))
-    for b in range(B):
-        for h in range(H):
-            for iq in range(T_Q):
-                for ik in range(T_KV):
-                    probs[b, h, iq, ik] = math.exp(scores[b, h, iq, ik]) / l[b, h, iq]
-    for b in range(B):
-        for h in range(H):
-            for iq in range(T_Q):
-                for ik in range(T_KV):
-                    for d in range(D):
-                        o[b, h, iq, d] += probs[b, h, iq, ik] * v[b, h, ik, d]
-    # l[0, 0, 0] = 1.0
+    scores = Array(dtype="float32", dims=(T_Q, T_KV))
+    exp_scores = Array(dtype="float32", dims=(T_Q, T_KV))
+    exp_sum = Array(dtype="float32", dims=(T_Q,))
+    probs = Array(dtype="float32", dims=(T_Q, T_KV))
+    for iq in range(T_Q):
+        exp_sum[iq] = 0.0
+        for d in range(D):
+            o[iq, d] = 0.0
+    for iq in range(T_Q):
+        for ik in range(T_KV):
+            s: "float32" = 0
+            for d in range(D):
+                s += q[iq, d] * k[ik, d]
+            scores[iq, ik] = s
+    for iq in range(T_Q):
+        for ik in range(T_KV):
+            exp_scores[iq, ik] = math.exp(scores[iq, ik])
+    for iq in range(T_Q):
+        for ik in range(T_KV):
+            exp_sum[iq] += exp_scores[iq, ik]
+    for iq in range(T_Q):
+        for ik in range(T_KV):
+            probs[iq, ik] = exp_scores[iq, ik] / exp_sum[iq]
+    for iq in range(T_Q):
+        for ik in range(T_KV):
+            for d in range(D):
+                o[iq, d] += probs[iq, ik] * v[ik, d]
 
 
 def test_optimize_attention():
     tree = attention.tree
     print(tree.numbered_repr())
 
+    tree = tree.fuse_loop(1, 3)
     tree = tree.fuse_loop(1, 5)
-    tree = tree.fuse_loop(2, 5)
+    tree = tree.fuse_loop(1, 6)
+    tree = tree.fuse_loop(1, 7)
     tree = tree.fuse_loop(1, 8)
-    tree = tree.fuse_loop(2, 8)
-    tree = tree.fuse_loop(1, 10)
-    tree = tree.fuse_loop(2, 10)
-    tree = tree.fuse_loop(1, 12)
-    tree = tree.fuse_loop(2, 12)
-    tree = tree.fuse_loop(3, 5)
-    tree = tree.fuse_loop(3, 7)
-    tree = tree.fuse_loop(8, 10)
-    tree = tree.fuse_loop(9, 10)
-    tree = tree.fuse_loop(8, 3)
-    tree = tree.fuse_loop(5, 7)
-    print("\nAfter fuse_loop:")
-    print(tree.numbered_repr())
 
-    tree = tree.localize_array_allocation(0, 1)
-    tree = tree.localize_array_allocation(0, 1)
-    tree = tree.localize_array_allocation(0, 1)
-    tree = tree.localize_array_allocation(0, 2)
-    tree = tree.localize_array_allocation(0, 2)
-    tree = tree.localize_array_allocation(0, 2)
-    print("\nAfter localize_array_allocation:")
+    print("End result:\n")
     print(tree.numbered_repr())
-
-    # tree = tree.parallelize_loop(1)
-    tree = tree.tile_loop(3, 16)
-    tree = tree.tile_loop(6, 16)
-    print("\nAfter tile_loop:")
-    print(tree.numbered_repr())
-
-    print(generate_code(tree))

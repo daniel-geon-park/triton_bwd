@@ -1,0 +1,336 @@
+scores = Array(dtype="float32", dims=(T_Q, T_KV))
+exp_scores = Array(dtype="float32", dims=(T_Q, T_KV))
+exp_sum = Array(dtype="float32", dims=(T_Q))
+probs = Array(dtype="float32", dims=(T_Q, T_KV))
+for iq in range(T_Q):
+    exp_sum[iq] = 0.0
+    for d in range(D):
+        o[iq, d] = 0.0
+for iq in range(T_Q):
+    for ik in range(T_KV):
+        s: "float32" = 0
+        for d in range(D):
+            s += q[iq, d] * k[ik, d]
+        scores[iq, ik] = s
+for iq in range(T_Q):
+    for ik in range(T_KV):
+        exp_scores[iq, ik] = math.exp(scores[iq, ik])
+for iq in range(T_Q):
+    for ik in range(T_KV):
+        exp_sum[iq] += exp_scores[iq, ik]
+for iq in range(T_Q):
+    for ik in range(T_KV):
+        probs[iq, ik] = exp_scores[iq, ik] / exp_sum[iq]
+for iq in range(T_Q):
+    for ik in range(T_KV):
+        for d in range(D):
+            o[iq, d] += probs[iq, ik] * v[ik, d]
+
+MERGE LOOPS
+scores = Array(dtype="float32", dims=(T_Q, T_KV))
+exp_scores = Array(dtype="float32", dims=(T_Q, T_KV))
+exp_sum = Array(dtype="float32", dims=(T_Q))
+probs = Array(dtype="float32", dims=(T_Q, T_KV))
+for iq in range(T_Q):
+    exp_sum[iq] = 0.0
+    for d in range(D):
+        o[iq, d] = 0.0
+    for ik in range(T_KV):
+        s: "float32" = 0
+        for d in range(D):
+            s += q[iq, d] * k[ik, d]
+        scores[iq, ik] = s
+    for ik in range(T_KV):
+        exp_scores[iq, ik] = math.exp(scores[iq, ik])
+    for ik in range(T_KV):
+        exp_sum[iq] += exp_scores[iq, ik]
+    for ik in range(T_KV):
+        probs[iq, ik] = exp_scores[iq, ik] / exp_sum[iq]
+    for ik in range(T_KV):
+        for d in range(D):
+            o[iq, d] += probs[iq, ik] * v[ik, d]
+
+TILE LOOP iq
+scores = Array(dtype="float32", dims=(T_Q, T_KV))
+exp_scores = Array(dtype="float32", dims=(T_Q, T_KV))
+exp_sum = Array(dtype="float32", dims=(T_Q))
+probs = Array(dtype="float32", dims=(T_Q, T_KV))
+for iq_outer in range(0, T_Q, BQ):
+    for iq in range(iq_outer, iq_outer + BQ):
+        exp_sum[iq] = 0.0
+        for d in range(D):
+            o[iq, d] = 0.0
+        for ik in range(T_KV):
+            s: "float32" = 0
+            for d in range(D):
+                s += q[iq, d] * k[ik, d]
+            scores[iq, ik] = s
+        for ik in range(T_KV):
+            exp_scores[iq, ik] = math.exp(scores[iq, ik])
+        for ik in range(T_KV):
+            exp_sum[iq] += exp_scores[iq, ik]
+        for ik in range(T_KV):
+            probs[iq, ik] = exp_scores[iq, ik] / exp_sum[iq]
+        for ik in range(T_KV):
+            for d in range(D):
+                o[iq, d] += probs[iq, ik] * v[ik, d]
+
+
+LOCALIZE ARRAYS
+for iq_outer in range(0, T_Q, BQ):
+    scores = Array(dtype="float32", dims=(BQ, T_KV))
+    exp_scores = Array(dtype="float32", dims=(BQ, T_KV))
+    exp_sum = Array(dtype="float32", dims=(BQ))
+    probs = Array(dtype="float32", dims=(BQ, T_KV))
+    for iq in range(iq_outer, iq_outer + BQ):
+        iq_local = iq - iq_outer
+        exp_sum[iq_local] = 0.0
+        for d in range(D):
+            o[iq, d] = 0.0
+        for ik in range(T_KV):
+            s: "float32" = 0
+            for d in range(D):
+                s += q[iq, d] * k[ik, d]
+            scores[iq_local, ik] = s
+        for ik in range(T_KV):
+            exp_scores[iq_local, ik] = math.exp(scores[iq_local, ik])
+        for ik in range(T_KV):
+            exp_sum[iq_local] += exp_scores[iq_local, ik]
+        for ik in range(T_KV):
+            probs[iq_local, ik] = exp_scores[iq_local, ik] / exp_sum[iq_local]
+        for ik in range(T_KV):
+            for d in range(D):
+                o[iq, d] += probs[iq_local, ik] * v[ik, d]
+
+MERGE LOOPS
+for iq_outer in range(0, T_Q, BQ):
+    scores = Array(dtype="float32", dims=(BQ, T_KV))
+    exp_scores = Array(dtype="float32", dims=(BQ, T_KV))
+    exp_sum = Array(dtype="float32", dims=(BQ))
+    probs = Array(dtype="float32", dims=(BQ, T_KV))
+    for iq in range(iq_outer, iq_outer + BQ):
+        iq_local = iq - iq_outer
+        exp_sum[iq_local] = 0.0
+        for d in range(D):
+            o[iq, d] = 0.0
+        for ik in range(T_KV):
+            s: "float32" = 0
+            for d in range(D):
+                s += q[iq, d] * k[ik, d]
+            scores[iq_local, ik] = s
+        for ik in range(T_KV):
+            exp_scores[iq_local, ik] = math.exp(scores[iq_local, ik])
+        for ik in range(T_KV):
+            exp_sum[iq_local] += exp_scores[iq_local, ik]
+        for ik in range(T_KV):
+            probs[iq_local, ik] = exp_scores[iq_local, ik] / exp_sum[iq_local]
+            for d in range(D):
+                o[iq, d] += probs[iq_local, ik] * v[ik, d]
+
+LOCALIZE ARRAY probs
+for iq_outer in range(0, T_Q, BQ):
+    scores = Array(dtype="float32", dims=(BQ, T_KV))
+    exp_scores = Array(dtype="float32", dims=(BQ, T_KV))
+    exp_sum = Array(dtype="float32", dims=(BQ))
+    for iq in range(iq_outer, iq_outer + BQ):
+        probs = Array(dtype="float32", dims=(T_KV,))
+        iq_local = iq - iq_outer
+        exp_sum[iq_local] = 0.0
+        for d in range(D):
+            o[iq, d] = 0.0
+        for ik in range(T_KV):
+            s: "float32" = 0
+            for d in range(D):
+                s += q[iq, d] * k[ik, d]
+            scores[iq_local, ik] = s
+        for ik in range(T_KV):
+            exp_scores[iq_local, ik] = math.exp(scores[iq_local, ik])
+        for ik in range(T_KV):
+            exp_sum[iq_local] += exp_scores[iq_local, ik]
+        for ik in range(T_KV):
+            probs[ik] = exp_scores[iq_local, ik] / exp_sum[iq_local]
+            for d in range(D):
+                o[iq, d] += probs[ik] * v[ik, d]
+
+
+LOCALIZE ARRAY probs
+for iq_outer in range(0, T_Q, BQ):
+    scores = Array(dtype="float32", dims=(BQ, T_KV))
+    exp_scores = Array(dtype="float32", dims=(BQ, T_KV))
+    exp_sum = Array(dtype="float32", dims=(BQ))
+    for iq in range(iq_outer, iq_outer + BQ):
+        iq_local = iq - iq_outer
+        exp_sum[iq_local] = 0.0
+        for d in range(D):
+            o[iq, d] = 0.0
+        for ik in range(T_KV):
+            s: "float32" = 0
+            for d in range(D):
+                s += q[iq, d] * k[ik, d]
+            scores[iq_local, ik] = s
+        for ik in range(T_KV):
+            exp_scores[iq_local, ik] = math.exp(scores[iq_local, ik])
+        for ik in range(T_KV):
+            exp_sum[iq_local] += exp_scores[iq_local, ik]
+        for ik in range(T_KV):
+            probs: "float32"
+            probs = exp_scores[iq_local, ik] / exp_sum[iq_local]
+            for d in range(D):
+                o[iq, d] += probs * v[ik, d]
+
+CONSTANT FOLD probs
+for iq_outer in range(0, T_Q, BQ):
+    scores = Array(dtype="float32", dims=(BQ, T_KV))
+    exp_scores = Array(dtype="float32", dims=(BQ, T_KV))
+    exp_sum = Array(dtype="float32", dims=(BQ))
+    for iq in range(iq_outer, iq_outer + BQ):
+        iq_local = iq - iq_outer
+        exp_sum[iq_local] = 0.0
+        for d in range(D):
+            o[iq, d] = 0.0
+        for ik in range(T_KV):
+            s: "float32" = 0
+            for d in range(D):
+                s += q[iq, d] * k[ik, d]
+            scores[iq_local, ik] = s
+        for ik in range(T_KV):
+            exp_scores[iq_local, ik] = math.exp(scores[iq_local, ik])
+        for ik in range(T_KV):
+            exp_sum[iq_local] += exp_scores[iq_local, ik]
+        for ik in range(T_KV):
+            for d in range(D):
+                o[iq, d] += exp_scores[iq_local, ik] * v[ik, d] / exp_sum[iq_local]
+
+EXPAND ADD-ASSIGN
+for iq_outer in range(0, T_Q, BQ):
+    scores = Array(dtype="float32", dims=(BQ, T_KV))
+    exp_scores = Array(dtype="float32", dims=(BQ, T_KV))
+    exp_sum = Array(dtype="float32", dims=(BQ))
+    for iq in range(iq_outer, iq_outer + BQ):
+        iq_local = iq - iq_outer
+        exp_sum[iq_local] = 0.0
+        for d in range(D):
+            o[iq, d] = 0.0
+        for ik in range(T_KV):
+            s: "float32" = 0
+            for d in range(D):
+                s += q[iq, d] * k[ik, d]
+            scores[iq_local, ik] = s
+        for ik in range(T_KV):
+            exp_scores[iq_local, ik] = math.exp(scores[iq_local, ik])
+        for ik in range(T_KV):
+            exp_sum[iq_local] += exp_scores[iq_local, ik]
+        for ik in range(T_KV):
+            for d in range(D):
+                o[iq, d] = o[iq, d] + exp_scores[iq_local, ik] * v[ik, d] / exp_sum[iq_local]
+
+
+REORDER STATEMENTS WITHIN LOOP
+for iq_outer in range(0, T_Q, BQ):
+    scores = Array(dtype="float32", dims=(BQ, T_KV))
+    exp_scores = Array(dtype="float32", dims=(BQ, T_KV))
+    exp_sum = Array(dtype="float32", dims=(BQ))
+    for iq in range(iq_outer, iq_outer + BQ):
+        iq_local = iq - iq_outer
+        exp_sum[iq_local] = 0.0
+        for ik in range(T_KV):
+            s: "float32" = 0
+            for d in range(D):
+                s += q[iq, d] * k[ik, d]
+            scores[iq_local, ik] = s
+        for ik in range(T_KV):
+            exp_scores[iq_local, ik] = math.exp(scores[iq_local, ik])
+        for ik in range(T_KV):
+            exp_sum[iq_local] += exp_scores[iq_local, ik]
+        for d in range(D):
+            o[iq, d] = 0.0
+        for ik in range(T_KV):
+            for d in range(D):
+                o[iq, d] = o[iq, d] + exp_scores[iq_local, ik] * v[ik, d] / exp_sum[iq_local]
+
+
+CACHE ARRAY
+for iq_outer in range(0, T_Q, BQ):
+    scores = Array(dtype="float32", dims=(BQ, T_KV))
+    exp_scores = Array(dtype="float32", dims=(BQ, T_KV))
+    exp_sum = Array(dtype="float32", dims=(BQ))
+    oo = Array(dtype="float32", dims=(BQ, D))  # NEW
+    for iq in range(iq_outer, iq_outer + BQ):
+        iq_local = iq - iq_outer
+        exp_sum[iq_local] = 0.0
+        for ik in range(T_KV):
+            s: "float32" = 0
+            for d in range(D):
+                s += q[iq, d] * k[ik, d]
+            scores[iq_local, ik] = s
+        for ik in range(T_KV):
+            exp_scores[iq_local, ik] = math.exp(scores[iq_local, ik])
+        for ik in range(T_KV):
+            exp_sum[iq_local] += exp_scores[iq_local, ik]
+        for d in range(D):
+            oo[iq_local, d] = 0.0  # CHANGED
+        for ik in range(T_KV):
+            for d in range(D):
+                oo[iq_local, d] = oo[iq_local, d] + exp_scores[iq_local, ik] * v[ik, d] / exp_sum[iq_local]  # CHANGED
+    for iq in range(iq_outer, iq_outer + BQ):  # NEW
+        iq_local = iq - iq_outer
+        for d in range(D):
+            o[iq, d] = oo[iq_local, d]
+
+
+MULTIPLY STORED VALUE, DIVIDE LOAD VALUE
+for iq_outer in range(0, T_Q, BQ):
+    scores = Array(dtype="float32", dims=(BQ, T_KV))
+    exp_scores = Array(dtype="float32", dims=(BQ, T_KV))
+    exp_sum = Array(dtype="float32", dims=(BQ))
+    oo = Array(dtype="float32", dims=(BQ, D))
+    for iq in range(iq_outer, iq_outer + BQ):
+        iq_local = iq - iq_outer
+        exp_sum[iq_local] = 0.0
+        for ik in range(T_KV):
+            s: "float32" = 0
+            for d in range(D):
+                s += q[iq, d] * k[ik, d]
+            scores[iq_local, ik] = s
+        for ik in range(T_KV):
+            exp_scores[iq_local, ik] = math.exp(scores[iq_local, ik])
+        for ik in range(T_KV):
+            exp_sum[iq_local] += exp_scores[iq_local, ik]
+        for d in range(D):
+            oo[iq_local, d] = 0.0 * exp_sum[iq_local]
+        for ik in range(T_KV):
+            for d in range(D):
+                oo[iq_local, d] = ((oo[iq_local, d] / exp_sum[iq_local]) + exp_scores[iq_local, ik] * v[ik, d]  / exp_sum[iq_local]) * exp_sum[iq_local]
+    for iq in range(iq_outer, iq_outer + BQ):
+        iq_local = iq - iq_outer
+        for d in range(D):
+            o[iq, d] = oo[iq_local, d] / exp_sum[iq_local]
+
+
+SIMPLIFY
+for iq_outer in range(0, T_Q, BQ):
+    scores = Array(dtype="float32", dims=(BQ, T_KV))
+    exp_scores = Array(dtype="float32", dims=(BQ, T_KV))
+    exp_sum = Array(dtype="float32", dims=(BQ))
+    oo = Array(dtype="float32", dims=(BQ, D))
+    for iq in range(iq_outer, iq_outer + BQ):
+        iq_local = iq - iq_outer
+        exp_sum[iq_local] = 0.0
+        for ik in range(T_KV):
+            s: "float32" = 0
+            for d in range(D):
+                s += q[iq, d] * k[ik, d]
+            scores[iq_local, ik] = s
+        for ik in range(T_KV):
+            exp_scores[iq_local, ik] = math.exp(scores[iq_local, ik])
+        for ik in range(T_KV):
+            exp_sum[iq_local] += exp_scores[iq_local, ik]
+        for d in range(D):
+            oo[iq_local, d] = 0.0
+        for ik in range(T_KV):
+            for d in range(D):
+                oo[iq_local, d] = oo[iq_local, d] + exp_scores[iq_local, ik] * v[ik, d]
+    for iq in range(iq_outer, iq_outer + BQ):
+        iq_local = iq - iq_outer
+        for d in range(D):
+            o[iq, d] = oo[iq_local, d] / exp_sum[iq_local]
