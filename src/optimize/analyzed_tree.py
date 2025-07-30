@@ -410,6 +410,27 @@ class AnalyzedNode:
 
         return analyze_tree(new_tree)
 
+    def move_array_outside(self, decl_idx: int, new_axis: int) -> "AnalyzedNode":
+        """Moves an array declaration one level outside a loop."""
+        analyzed_tree = copy.deepcopy(self)  # Ensure we don't modify the original tree
+        new_tree = analyzed_tree.obj
+
+        decl = analyzed_tree.find_stmt(("D", decl_idx))
+
+        if decl is None:
+            raise ValueError(
+                f"Invalid declaration index: {decl_idx}\n" + self.numbered_repr()
+            )
+
+        assert decl.parent is not None
+        if decl.parent.parent is None:
+            raise ValueError(
+                f"Declaration D{decl_idx} is at the top level and cannot be moved outside:\n"
+                + self.numbered_repr()
+            )
+
+        assert isinstance(decl.obj, Declaration)
+
     def tile_loop(
         self, loop_idx: int, tile_size: Union[int, sympy.Basic]
     ) -> "AnalyzedNode":
