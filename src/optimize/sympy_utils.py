@@ -196,6 +196,14 @@ class SympyIndexing(sympy.Function):
             index_str = printer.doprint(index)
         return printer.doprint(array) + "[" + index_str + "]"
 
+    @property
+    def array(self):
+        return self.args[0]
+
+    @property
+    def index(self):
+        return self.args[1]
+
 
 class SympyDtype(sympy.Function):
     @classmethod

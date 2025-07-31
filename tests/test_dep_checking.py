@@ -332,10 +332,17 @@ def test_optimize_attention():
     tree = tree.move_array_outside(0, 0)
     tree = tree.move_array_outside(1, 0)
     tree = tree.move_array_outside(2, 0)
-    tree = tree.move_array_outside(3, 0)
 
     # 5 MERGE LOOPS
     tree = tree.fuse_loop(8, 9)
+
+    # 6 LOCALIZE ARRAY
+    tree = tree.move_array_inside(3, 8)
+
+    # 7 CONSTANT FOLDING
+    tree = tree.constant_fold(8, "probs", 4, 7)
+
+    # 8 CACHE ARRAY
 
     print("End result:")
     print(tree.numbered_repr())

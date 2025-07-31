@@ -170,6 +170,107 @@ class AnalyzedNode:
                 dependencies.update(deps)
         return dependencies
 
+    # Code transformation operations
+    def constant_fold(
+        self,
+        asgn_idx: int,
+        var_name: str,
+        var_decl_idx: int,
+        var_def_idx: int,
+    ) -> "AnalyzedNode":
+        """Replaces a variable in a statement with its defined value."""
+        analyzed_tree = copy.deepcopy(self)
+        new_tree = analyzed_tree.obj
+
+        stmt = analyzed_tree.find_stmt(("A", asgn_idx))
+        if stmt is None:
+            raise ValueError(
+                f"Invalid statement index: {asgn_idx}\n" + self.numbered_repr()
+            )
+
+        assert isinstance(stmt.obj, Assignment)
+
+        decl = analyzed_tree.find_stmt(("D", var_decl_idx))
+        if decl is None:
+            raise ValueError(
+                f"Invalid declaration index: {var_decl_idx}\n" + self.numbered_repr()
+            )
+
+        assert isinstance(decl.obj, Declaration)
+
+        if (var_name, decl) not in stmt.in_defs:
+            raise ValueError(
+                f"Variable `{var_name}` is not accessible from A{asgn_idx}:\n"
+                + self.numbered_repr()
+            )
+
+        in_defs: Set[AnalyzedNode] = stmt.in_defs[(var_name, decl)]
+
+        num_replaced = 0
+
+        if isinstance(decl.obj.symbol, SymbolicArray):
+            pattern = SympyIndexing(decl.obj.symbol, sympy.Wild("index"))
+
+            def update_expr(index: sympy.Basic) -> sympy.Basic:
+
+                def indices_match(d: AnalyzedNode) -> bool:
+                    assert isinstance(d.obj, Assignment)
+                    assert isinstance(d.obj.target, SympyIndexing)
+                    d_index = d.obj.target.index
+                    return (
+                        index == d_index
+                    )  # FIXME: check if the contained variables' declarations match
+
+                matching_defs = set(filter(indices_match, in_defs))
+                if len(matching_defs) > 1:
+                    raise ValueError(
+                        f"Multiple reachable definitions of `{var_name}`:\n"
+                        + self.numbered_repr()
+                    )
+
+                definition: AnalyzedNode = next(iter(matching_defs))
+                assert isinstance(definition.obj, Assignment)
+
+                if definition.num != var_def_idx:
+                    # Keep the original symbol if definition is not the one we want
+                    return SympyIndexing(decl.obj.symbol, index)
+
+                nonlocal num_replaced
+                num_replaced += 1
+
+                return definition.obj.value
+
+        else:
+            pattern = decl.obj.symbol
+
+            def update_expr() -> sympy.Basic:
+                if len(in_defs) > 1:
+                    raise ValueError(
+                        f"Multiple reachable definitions of `{var_name}`:\n"
+                        + self.numbered_repr()
+                    )
+                definition = next(iter(in_defs))
+                assert isinstance(definition.obj, Assignment)
+
+                if definition.num != var_def_idx:
+                    # Keep the original symbol if definition is not the one we want
+                    return decl.obj.symbol
+
+                nonlocal num_replaced
+                num_replaced += 1
+
+                return definition.obj.value
+
+        stmt.obj.exprs = [expr.replace(pattern, update_expr) for expr in stmt.obj.exprs]
+
+        if num_replaced == 0:
+            raise ValueError(
+                f"No reference to {var_name} in target statement A{asgn_idx} refers to defintion A{var_def_idx}:\n"
+                + self.numbered_repr()
+            )
+
+        return analyze_tree(new_tree)
+
     def fuse_loop(self, loop_idx_a: int, loop_idx_b: int) -> "AnalyzedNode":
         """Fuses two consecutive loops."""
         analyzed_tree = copy.deepcopy(self)  # Ensure we don't modify the original tree
