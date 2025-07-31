@@ -285,3 +285,24 @@ def broadcasat_shapes(shape1: sympy.Tuple, shape2: sympy.Tuple):
             raise ValueError(f"Incompatible {idim}th dimensions: {dim1} and {dim2}")
 
     return sympy.Tuple(*[sympy.Max(dim1, dim2) for dim1, dim2 in zip(shape1, shape2)])
+
+
+class IntegerDivision(sympy.Function):
+    @classmethod
+    def eval(cls, a, b):
+        if isinstance(a, sympy.Number) and isinstance(b, sympy.Number):
+            return int(a) // int(b)
+        if b == 1:
+            return a
+
+    def _sympystr(self, printer):
+        a, b = self.args
+        return f"idiv({printer.doprint(a)}, {printer.doprint(b)})"
+
+
+def floordiv(a: sympy.Basic, b: sympy.Basic) -> sympy.Basic:
+    return IntegerDivision(a, b)
+
+
+def ceildiv(a: sympy.Basic, b: sympy.Basic) -> sympy.Basic:
+    return floordiv(a + b - 1, b)

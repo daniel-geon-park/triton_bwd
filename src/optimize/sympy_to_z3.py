@@ -4,7 +4,7 @@ import sympy
 import z3
 from sympy.core.relational import Relational
 
-from optimize.sympy_utils import SymbolicScalar
+from optimize.sympy_utils import IntegerDivision, SymbolicScalar
 
 
 def sympy_to_z3(sympy_exp: Union[sympy.Expr, Relational]):
@@ -105,6 +105,11 @@ def _sympy_to_z3_rec(var_map: Dict[str, z3.ArithRef], e: sympy.Expr) -> z3.Arith
         left = _sympy_to_z3_rec(var_map, e.args[0])
         right = _sympy_to_z3_rec(var_map, e.args[1])
         rv = z3.If(left <= right, left, right)
+
+    elif isinstance(e, IntegerDivision):
+        left = _sympy_to_z3_rec(var_map, e.args[0])
+        right = _sympy_to_z3_rec(var_map, e.args[1])
+        rv = left / right
 
     if rv is None:
         raise RuntimeError(

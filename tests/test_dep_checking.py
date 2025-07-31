@@ -328,7 +328,14 @@ def test_optimize_attention():
     # 3 TILE LOOP iq
     tree = tree.tile_loop(1, 32)
 
-    # 4 TODO: MOVE ARRAY OUTSIDE
+    # 4 MOVE ARRAY OUTSIDE
+    tree = tree.move_array_outside(0, 0)
+    tree = tree.move_array_outside(1, 0)
+    tree = tree.move_array_outside(2, 0)
+    tree = tree.move_array_outside(3, 0)
+
+    # 5 MERGE LOOPS
+    tree = tree.fuse_loop(8, 9)
 
     print("End result:")
     print(tree.numbered_repr())

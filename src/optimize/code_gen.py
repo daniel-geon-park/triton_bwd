@@ -13,6 +13,7 @@ from optimize.sympy_utils import (
     SymbolicScalar,
     SympyDtype,
     SympyShape,
+    ceildiv,
 )
 
 
@@ -114,7 +115,9 @@ def _generate_kernel(node: AnalyzedNode, backend: str) -> Tuple[List[str], List[
     preamble.extend(code_lines)
 
     torch_pr = CodePrinter("torch")
-    num_threads = (node.obj.index_end - node.obj.index_begin) // node.obj.index_step
+    num_threads = ceildiv(
+        node.obj.index_end - node.obj.index_begin, node.obj.index_step
+    )
     arg_list = [name for name, dtype, ndims in parameters]
     code_lines = [
         f"{kernel_function_name}[({torch_pr.doprint(num_threads)},)]({', '.join(arg_list)})"
@@ -147,11 +150,12 @@ def _generate_code_loop(
         code_lines = [f"def function({', '.join(arguments)}):"]
 
     else:
-        i, begin, end, step = (
+        i, begin, end, step, max_steps = (
             node.obj.index_var,
             node.obj.index_begin,
             node.obj.index_end,
             node.obj.index_step,
+            node.obj.max_steps,
         )
         code_lines = [
             f"for {pr.doprint(i)} in range({pr.doprint(begin)}, {pr.doprint(end)}, {pr.doprint(step)}):"

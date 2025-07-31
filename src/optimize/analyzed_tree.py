@@ -14,6 +14,7 @@ from optimize.sympy_utils import (
     SympyDtype,
     SympyIndexing,
     SympyShape,
+    ceildiv,
 )
 
 
@@ -233,6 +234,8 @@ class AnalyzedNode:
             index_step=loop_a.index_step,
             declarations=new_declarations,
             statements=new_statements,
+            is_kernel=loop_a.is_kernel and loop_b.is_kernel,
+            max_steps=loop_a.max_steps,
         )
 
         loop_a_idx = parent_loop.statements.index(loop_a)
@@ -307,6 +310,8 @@ class AnalyzedNode:
             index_step=parent_loop.obj.index_step,
             declarations=copy.deepcopy(parent_loop.obj.declarations),
             statements=stmts_after,
+            is_kernel=parent_loop.obj.is_kernel,
+            max_steps=parent_loop.obj.max_steps,
         )
         loop_index = parent_loop.parent.obj.statements.index(parent_loop.obj)
         parent_loop.parent.obj.statements.insert(loop_index + 1, new_loop)
@@ -422,14 +427,70 @@ class AnalyzedNode:
                 f"Invalid declaration index: {decl_idx}\n" + self.numbered_repr()
             )
 
+        assert isinstance(decl.obj, Declaration)
         assert decl.parent is not None
+
         if decl.parent.parent is None:
             raise ValueError(
                 f"Declaration D{decl_idx} is at the top level and cannot be moved outside:\n"
                 + self.numbered_repr()
             )
 
-        assert isinstance(decl.obj, Declaration)
+        inner_loop = decl.parent
+        outer_loop = inner_loop.parent
+
+        assert isinstance(inner_loop.obj, ForLoop)
+        assert isinstance(outer_loop.obj, ForLoop)
+
+        array_name, array_symbol = decl.obj.name, decl.obj.symbol
+        if array_name in outer_loop.obj.declarations:
+            raise ValueError(
+                f"Variable '{array_name}' in D{decl_idx} already exists in the outer loop L{outer_loop.num}:\n"
+                + self.numbered_repr()
+            )
+
+        old_shape = array_symbol.shape.args
+        if new_axis < 0 or new_axis > len(old_shape):
+            raise ValueError(
+                f"Invalid new axis {new_axis} for variable '{array_name}' in D{decl_idx}:\n"
+                + self.numbered_repr()
+            )
+
+        outer_begin = outer_loop.obj.index_begin
+        outer_step = outer_loop.obj.index_step
+        outer_idx = (outer_loop.obj.index_var - outer_begin) // outer_step
+
+        new_shape = (
+            old_shape[:new_axis] + (inner_loop.obj.max_steps,) + old_shape[new_axis:]
+        )
+        new_symbol = SymbolicArray(
+            array_name, array_symbol.dtype, sympy.Tuple(*new_shape)
+        )
+
+        del inner_loop.obj.declarations[array_name]
+        outer_loop.obj.declarations[array_name] = Declaration(array_name, new_symbol)
+
+        # Update indices in the loop's statements
+        pattern = SympyIndexing(array_symbol, sympy.Wild("index"))
+
+        def update_index(index):
+            if not isinstance(index, sympy.Tuple):
+                index = sympy.Tuple(index)
+            new_index = (
+                *index.args[:new_axis],
+                outer_idx,
+                *index.args[new_axis:],
+            )
+            new_index = sympy.Tuple(*new_index)
+            return SympyIndexing(array_symbol, new_index)
+
+        for stmt in inner_loop.descendants:
+            stmt.obj.exprs = [
+                expr.replace(pattern, update_index).replace(array_symbol, new_symbol)
+                for expr in stmt.obj.exprs
+            ]
+
+        return analyze_tree(new_tree)
 
     def tile_loop(
         self, loop_idx: int, tile_size: Union[int, sympy.Basic]
@@ -485,20 +546,21 @@ class AnalyzedNode:
         assert orig_step_size.is_positive is True
 
         outer_index_begin = for_loop.index_begin
-        outer_index_end = for_loop.index_end
+        outer_index_end = ceildiv(for_loop.index_end, tile_size)
         outer_index_var = SymbolicScalar(
-            f"__tile_{orig_index_var.label.name}_outer", SympyDtype(orig_index_var)
+            f"{orig_index_var.label.name}1", SympyDtype(orig_index_var)
         )
 
-        inner_index_begin = sympy.Max(outer_index_var, for_loop.index_begin)
+        inner_index_begin = sympy.Max(outer_index_var * tile_size, for_loop.index_begin)
         inner_index_end = sympy.Min(
-            outer_index_var + orig_step_size * (tile_size - 1) + 1, for_loop.index_end
+            outer_index_var * tile_size + orig_step_size * (tile_size - 1) + 1,
+            for_loop.index_end,
         )
 
         for_loop.index_var = outer_index_var
-        for_loop.index_step = for_loop.index_step * tile_size
         for_loop.index_begin = outer_index_begin
         for_loop.index_end = outer_index_end
+        for_loop.max_steps = ceildiv(for_loop.max_steps, tile_size)
         for_loop.statements = [
             ForLoop(
                 index_var=orig_index_var,
@@ -508,6 +570,7 @@ class AnalyzedNode:
                 declarations=for_loop.declarations,
                 statements=for_loop.statements,
                 is_kernel=for_loop.is_kernel,
+                max_steps=tile_size,
             )
         ]
         for_loop.declarations = {}
@@ -597,7 +660,10 @@ def _analyze_tree_impl(
         )
 
     elif isinstance(node, ForLoop):
-        text = f"for {node.index_var} in range({node.index_begin}, {node.index_end}, {node.index_step}):"
+        text = (
+            f"for {node.index_var} in range({node.index_begin}, {node.index_end}, {node.index_step}):"
+            + f"  # {node.max_steps} steps"
+        )
         result = [
             AnalyzedNode(
                 kind="L",

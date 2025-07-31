@@ -3,7 +3,7 @@ from typing import Dict, List, Optional, Union
 
 import sympy
 
-from optimize.sympy_utils import SymbolicArray, SymbolicScalar, SympyShape
+from optimize.sympy_utils import SymbolicArray, SymbolicScalar, SympyShape, ceildiv
 
 
 class AbstractNode(abc.ABC):
@@ -66,6 +66,7 @@ class ForLoop(AbstractNode):
         statements: List[AbstractNode],
         is_kernel: bool = False,
         arguments: Optional[Dict[str, sympy.Basic]] = None,
+        max_steps: Optional[sympy.Basic] = None,
     ):
         super().__init__()
         assert (
@@ -80,6 +81,10 @@ class ForLoop(AbstractNode):
         self.is_kernel = is_kernel
         self.arguments = arguments
 
+        self.max_steps = max_steps
+        if self.max_steps is None:
+            self.max_steps: sympy.Basic = ceildiv((index_end - index_begin), index_step)
+
     def __repr__(self):
         stmt_reprs = []
         for decl in self.declarations.values():
@@ -88,7 +93,8 @@ class ForLoop(AbstractNode):
             stmt_repr = repr(stmt)
             stmt_reprs.extend(stmt_repr.split("\n"))
         return (
-            f"for {self.index_var} in range({self.index_begin}, {self.index_end}, {self.index_step}):\n"
+            f"for {self.index_var} in range({self.index_begin}, {self.index_end}, {self.index_step}):"
+            + f"  # max {self.max_steps} steps\n"
             + "\n".join(f"    {stmt_repr}" for stmt_repr in stmt_reprs)
         )
 
