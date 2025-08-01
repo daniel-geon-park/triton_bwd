@@ -7,7 +7,7 @@ from sympy.solvers.solveset import NonlinearError, linear_coeffs
 from optimize.abtract_tree import AbstractNode, Assignment, Declaration, ForLoop
 from optimize.dependence_checking import dependence_levels
 from optimize.flow_analysis import DefDict, flow_analysis
-from optimize.mem_access import get_mem_accesses
+from optimize.mem_access import find_decl_stmt, get_mem_accesses
 from optimize.sympy_utils import (
     SymbolicArray,
     SymbolicScalar,
@@ -268,6 +268,71 @@ class AnalyzedNode:
                 f"No reference to {var_name} in target statement A{asgn_idx} refers to defintion A{var_def_idx}:\n"
                 + self.numbered_repr()
             )
+
+        return analyze_tree(new_tree)
+
+    def cache_array(self, var_name: str, decl_idx: Optional[int]) -> "AnalyzedNode":
+        """
+        Make an extra local array variable, replace all operations on var_name to the new array,
+        and write the result to the original variable at the end of the original variable's scope.
+        """
+        analyzed_tree = copy.deepcopy(self)
+        new_tree = analyzed_tree.obj
+
+        if decl_idx is None:  # is argument
+            decl = None
+            decl_loop = analyzed_tree.find_stmt(("L", 0))
+            assert isinstance(analyzed_tree.obj, ForLoop)
+            if var_name not in analyzed_tree.obj.arguments:
+                raise ValueError(
+                    f"Variable `{var_name}` is not an argument of the top-level loop:\n"
+                    + self.numbered_repr()
+                )
+            var_symbol = analyzed_tree.obj.arguments[var_name]
+        else:
+            decl = analyzed_tree.find_stmt(("D", decl_idx))
+            if decl is None:
+                raise ValueError(
+                    f"Invalid declaration index: {decl_idx}\n" + self.numbered_repr()
+                )
+            assert isinstance(decl.obj, Declaration)
+            if decl.obj.name != var_name:
+                raise ValueError(
+                    f"Declaration D{decl_idx} does not match variable name `{var_name}`:\n"
+                    + self.numbered_repr()
+                )
+            decl_loop = decl.parent
+            var_symbol = decl.obj.symbol
+
+        if not isinstance(var_symbol, SymbolicArray):
+            raise ValueError(
+                f"Variable `{var_name}` is not an array:\n" + self.numbered_repr()
+            )
+
+        assert isinstance(decl_loop.obj, ForLoop)
+
+        new_var_name = f"{var_name}_local"
+        new_var_symbol = SymbolicArray(new_var_name, var_symbol.dtype, var_symbol.shape)
+
+        if new_var_name in decl_loop.obj.declarations:
+            raise ValueError(
+                "Variable already exists in the loop's declarations:\n"
+                + self.numbered_repr()
+            )
+
+        decl_loop.obj.declarations[new_var_name] = Declaration(
+            new_var_name, new_var_symbol
+        )
+
+        for stmt in decl_loop.descendants:
+            stmt.obj.exprs = [
+                expr.replace(var_symbol, new_var_symbol) for expr in stmt.obj.exprs
+            ]
+
+        # FIXME: copy to the new variable at the beginning of the iteration if necessary
+
+        # Copy the original variable to the new variable at the end of the iteration
+        decl_loop.obj.statements.append(Assignment(var_symbol, new_var_symbol))
 
         return analyze_tree(new_tree)
 

@@ -83,6 +83,10 @@ def get_expr_mem_accesses(
             )
         ]
 
+    if isinstance(expr, SymbolicArray) and isinstance(expr.label, sympy.Symbol):
+        decl_stmt = find_decl_stmt(loop_nest, expr.label.name)
+        raise NotImplementedError
+
     if isinstance(expr, SympyIndexing):
         array, index = expr.args
         assert isinstance(array, SymbolicArray)

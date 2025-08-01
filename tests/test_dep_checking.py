@@ -343,6 +343,7 @@ def test_optimize_attention():
     tree = tree.constant_fold(8, "probs", 4, 7)
 
     # 8 CACHE ARRAY
+    tree = tree.cache_array("o", None)
 
     print("End result:")
     print(tree.numbered_repr())
