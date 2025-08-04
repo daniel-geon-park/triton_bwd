@@ -8,6 +8,8 @@ from optimize.sympy_utils import (
     SymbolicScalar,
     SympyIndexing,
     SympyShape,
+    SympySlice,
+    SympySliceSentinel,
 )
 
 if TYPE_CHECKING:
@@ -21,14 +23,12 @@ class MemAccess:
         symbol: Union[SymbolicScalar, SymbolicArray],
         decl_stmt: Optional["AnalyzedNode"],
         index: sympy.Tuple,
-        flat_index: sympy.Basic,
         statement: Optional["AnalyzedNode"] = None,
     ):
         self.name = name
         self.symbol = symbol
         self.decl_stmt = decl_stmt  # None if not declared in the loop nest (e.g. global variable or paremeter)
         self.index = index
-        self.flat_index = flat_index
         self.statement = statement
 
 
@@ -79,13 +79,20 @@ def get_expr_mem_accesses(
                 symbol=expr,
                 decl_stmt=decl_stmt,
                 index=sympy.Tuple(),
-                flat_index=sympy.Number(0),
             )
         ]
 
     if isinstance(expr, SymbolicArray) and isinstance(expr.label, sympy.Symbol):
         decl_stmt = find_decl_stmt(loop_nest, expr.label.name)
-        raise NotImplementedError
+        index = sympy.Tuple(*[SympySlice() for _ in range(len(expr.shape.args))])
+        return [
+            MemAccess(
+                name=expr.label.name,
+                symbol=expr,
+                decl_stmt=decl_stmt,
+                index=index,
+            )
+        ]
 
     if isinstance(expr, SympyIndexing):
         array, index = expr.args
@@ -98,20 +105,12 @@ def get_expr_mem_accesses(
         if not isinstance(index, sympy.Tuple):
             index = sympy.Tuple(index)
 
-        # Flatten the multi-dimensional index to a single integer
-        flat_index = sympy.Number(0)
-        shape = SympyShape(array)
-        assert len(shape.args) == len(index.args)
-        for dim, idx in zip(shape.args, index.args):
-            flat_index = flat_index * dim + idx
-
         return [
             MemAccess(
                 name=array_name,
                 symbol=array,
                 decl_stmt=decl_stmt,
                 index=index,
-                flat_index=flat_index,
             )
         ]
 

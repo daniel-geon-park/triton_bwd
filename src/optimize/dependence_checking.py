@@ -7,6 +7,7 @@ import z3
 from sympy.solvers.solveset import linear_coeffs
 
 from optimize.sympy_to_z3 import sympy_to_z3
+from optimize.sympy_utils import SympySlice
 
 if TYPE_CHECKING:
     from optimize.abtract_tree import ForLoop
@@ -15,18 +16,35 @@ if TYPE_CHECKING:
 total_time = 0
 
 
+def flatten_index(index: sympy.Basic, shape: sympy.Tuple) -> sympy.Basic:
+    # Flatten the multi-dimensional index to a single integer
+    flat_index = sympy.Number(0)
+    assert len(shape.args) == len(index.args)
+    for dim, idx in zip(shape.args, index.args):
+        if isinstance(idx, SympySlice):
+            idx = 0  # FIXME: handle slices properly
+        flat_index = flat_index * dim + idx
+    return flat_index
+
+
 def dependence_levels(
     s_before_t: bool,
     min_level: int,
+    shape_s: sympy.Tuple,
     index_s: sympy.Basic,
     nest_s: List["ForLoop"],
+    shape_t: sympy.Tuple,
     index_t: sympy.Basic,
     nest_t: List["ForLoop"],
-):
+) -> List[int]:
     loop_indices_s = [loop_s.index_var for loop_s in nest_s]
     loop_indices_t = [loop_t.index_var for loop_t in nest_t]
-    *ai, a0 = linear_coeffs(index_s, *loop_indices_s)
-    *bi, b0 = linear_coeffs(index_t, *loop_indices_t)
+
+    flat_index_s = flatten_index(index_s, shape_s)
+    *ai, a0 = linear_coeffs(flat_index_s, *loop_indices_s)
+
+    flat_index_t = flatten_index(index_t, shape_t)
+    *bi, b0 = linear_coeffs(flat_index_t, *loop_indices_t)
 
     num_common_loops = 0
     for loop_s, loop_t in zip(nest_s, nest_t):
@@ -68,7 +86,7 @@ def prove_independence(
     b0: sympy.Expr,
     nest_s: List["ForLoop"],
     nest_t: List["ForLoop"],
-):
+) -> List[int]:
     """Returns the list of levels u such that the independence cannot be proven."""
     lhs = a0 - b0
     iks, jks = [], []

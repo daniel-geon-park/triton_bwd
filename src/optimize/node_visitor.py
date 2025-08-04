@@ -17,6 +17,8 @@ from optimize.sympy_utils import (
     SympyDtype,
     SympyIndexing,
     SympyShape,
+    SympySlice,
+    SympySliceSentinel,
 )
 
 
@@ -376,9 +378,7 @@ class NodeVisitor(ast.NodeVisitor):
     def visit_Subscript(self, node):
         value = self.visit(node.value)
         index = self.visit(node.slice)
-        if all_sympy(value, index):
-            return SympyIndexing(value, index)
-        return value[index]
+        return SympyIndexing(value, index)
 
     def visit_Starred(self, node):
         raise NotImplementedError
@@ -396,10 +396,14 @@ class NodeVisitor(ast.NodeVisitor):
         return tuple(args)
 
     def visit_Slice(self, node):
-        lower = self.visit(node.lower) if node.lower is not None else None
-        upper = self.visit(node.upper) if node.upper is not None else None
-        step = self.visit(node.step) if node.step is not None else None
-        return slice(lower, upper, step)
+        lower = (
+            self.visit(node.lower) if node.lower is not None else SympySliceSentinel()
+        )
+        upper = (
+            self.visit(node.upper) if node.upper is not None else SympySliceSentinel()
+        )
+        step = self.visit(node.step) if node.step is not None else sympy.Number(1)
+        return SympySlice(lower, upper, step)
 
     def dereference_name(self, name, absent=None) -> Any:
         error_if_absent = False

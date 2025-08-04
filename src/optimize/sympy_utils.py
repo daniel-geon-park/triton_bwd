@@ -277,6 +277,39 @@ class SympyShape(sympy.Function):
         return result
 
 
+class SympySliceSentinel(sympy.Basic, metaclass=sympy.core.singleton.Singleton):
+    def _sympystr(self, p):
+        return ""
+
+
+sentinel = SympySliceSentinel()
+
+
+class SympySlice(sympy.Function):
+    @classmethod
+    def eval(cls, start=sentinel, stop=sentinel, step=sympy.S.One):
+        pass
+
+    def _sympystr(self, printer):
+        start, stop, step = self.args
+        result = f"{printer.doprint(start)}:{printer.doprint(stop)}"
+        if step != 1:
+            result = f"{result}:{printer.doprint(step)}"
+        return result
+
+    @property
+    def start(self):
+        return self.args[0]
+
+    @property
+    def stop(self):
+        return self.args[1]
+
+    @property
+    def step(self):
+        return self.args[2]
+
+
 def broadcasat_shapes(shape1: sympy.Tuple, shape2: sympy.Tuple):
     """Broadcast two shapes together."""
     # TODO: use symbolic computation

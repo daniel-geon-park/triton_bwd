@@ -264,6 +264,28 @@ def test_split_loop_2():
 
 @optimize(
     {
+        "a": ArraySpec(dtype="float32", dims=("N", "M")),
+        "b": ArraySpec(dtype="float32", dims=("N",)),
+    }
+)
+def example6(
+    a: InOutArray,
+    b: InOutArray,
+    N: int,
+    M: int,
+):
+    for j in range(M):
+        a[:, j] = b
+
+
+def test_example6():
+    print(example6.tree.numbered_repr())
+    deps = example6.tree.find_dependence(0, 0)
+    assert deps == set()
+
+
+@optimize(
+    {
         "q": ArraySpec(dtype="float32", dims=("T_Q", "D")),
         "k": ArraySpec(dtype="float32", dims=("T_KV", "D")),
         "v": ArraySpec(dtype="float32", dims=("T_KV", "D")),

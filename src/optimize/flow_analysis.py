@@ -23,7 +23,6 @@ def flow_analysis(node: "AnalyzedNode"):
                         symbol=symbol,
                         decl_stmt=node,
                         index=sympy.Tuple(),
-                        flat_index=sympy.Number(0),
                         statement=node,
                     )
                 ]
@@ -188,7 +187,6 @@ def build_blocks(
             symbol=node.obj.index_var,
             decl_stmt=node,
             index=sympy.Tuple(),
-            flat_index=sympy.Number(0),
             statement=node,
         )
 

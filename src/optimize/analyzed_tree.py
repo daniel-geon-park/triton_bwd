@@ -1,4 +1,5 @@
 import copy
+import itertools
 from typing import List, Optional, Set, Tuple, Union
 
 import sympy
@@ -7,7 +8,7 @@ from sympy.solvers.solveset import NonlinearError, linear_coeffs
 from optimize.abtract_tree import AbstractNode, Assignment, Declaration, ForLoop
 from optimize.dependence_checking import dependence_levels
 from optimize.flow_analysis import DefDict, flow_analysis
-from optimize.mem_access import find_decl_stmt, get_mem_accesses
+from optimize.mem_access import MemAccess, find_decl_stmt, get_mem_accesses
 from optimize.sympy_utils import (
     SymbolicArray,
     SymbolicScalar,
@@ -96,28 +97,31 @@ class AnalyzedNode:
         dependencies = set()
 
         def add_deps(dep_kind: str, S_accs, T_accs):
-            for s_acc in S_accs:
+            if on_vars is not None:
+                S_accs = filter(lambda acc: acc.name in on_vars, S_accs)
+                T_accs = filter(lambda acc: acc.name in on_vars, T_accs)
+            for s_acc, t_acc in itertools.product(
+                S_accs, T_accs
+            ):  # type: MemAccess, MemAccess
                 s_var = (s_acc.name, s_acc.decl_stmt)
-                if on_vars is not None and s_acc.name not in on_vars:
+                t_var = (t_acc.name, t_acc.decl_stmt)
+                if s_var != t_var:
                     continue
-                for t_acc in T_accs:
-                    if on_vars is not None and t_acc.name not in on_vars:
-                        continue
-                    t_var = (t_acc.name, t_acc.decl_stmt)
-                    if s_var == t_var:
-                        min_level = 0
-                        if s_acc.decl_stmt is not None:
-                            min_level = s_acc.decl_stmt.level
-                        dep_levels = dependence_levels(
-                            s_before_t=i < j,
-                            min_level=min_level,
-                            index_s=s_acc.flat_index,
-                            nest_s=nest_S,
-                            index_t=t_acc.flat_index,
-                            nest_t=nest_T,
-                        )
-                        for u in dep_levels:
-                            dependencies.add((dep_kind, u, s_acc.name))
+                min_level = 0
+                if s_acc.decl_stmt is not None:
+                    min_level = s_acc.decl_stmt.level
+                dep_levels = dependence_levels(
+                    s_before_t=i < j,
+                    min_level=min_level,
+                    shape_s=s_acc.symbol.shape,
+                    index_s=s_acc.index,
+                    nest_s=nest_S,
+                    shape_t=t_acc.symbol.shape,
+                    index_t=t_acc.index,
+                    nest_t=nest_T,
+                )
+                for u in dep_levels:
+                    dependencies.add((dep_kind, u, s_acc.name))
 
         # Flow dependencies
         add_deps("flow", S_stores, T_loads)
