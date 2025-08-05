@@ -77,6 +77,7 @@ class OptimizableFunction:
             tree = ast.parse(source)
 
             # Parse the tree to create an abstract syntax tree
+            # FIXME: spec.symbol() should return a SymbolicArray with SymbolicScalar shape
             args = {name: spec.symbol() for name, spec in self.arg_specs.items()}
             visitor = NodeVisitor(
                 call_stack=[self.func.__name__],

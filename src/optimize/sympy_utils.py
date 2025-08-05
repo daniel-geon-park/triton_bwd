@@ -265,8 +265,19 @@ class SympyShape(sympy.Function):
                 shape = broadcasat_shapes(shape, other_shape)
             result = shape
         elif isinstance(array, SympyIndexing):
-            # TODO: handle slices and other indexing
-            result = sympy.Tuple()
+            array_shape = SympyShape(array.array)
+            result_shape = []
+            axis = 0
+            for idx in array.index.args:
+                if isinstance(idx, SympySlice):
+                    dim = array_shape.args[axis]
+                    axis += 1
+                    result_shape.append(idx.calc_dim(dim))
+                # TODO: handle new axis
+                else:
+                    # Assume single index access
+                    axis += 1
+            result = sympy.Tuple(*result_shape)
         else:
             # TODO: implement other array operations
             raise ValueError(f"Unsupported type for shape: {type(array)}")
@@ -282,12 +293,12 @@ class SympySliceSentinel(sympy.Basic, metaclass=sympy.core.singleton.Singleton):
         return ""
 
 
-sentinel = SympySliceSentinel()
+SENTINEL_INDEX = SympySliceSentinel()
 
 
 class SympySlice(sympy.Function):
     @classmethod
-    def eval(cls, start=sentinel, stop=sentinel, step=sympy.S.One):
+    def eval(cls, start, stop, step):
         pass
 
     def _sympystr(self, printer):
@@ -296,6 +307,16 @@ class SympySlice(sympy.Function):
         if step != 1:
             result = f"{result}:{printer.doprint(step)}"
         return result
+
+    def calc_dim(self, length: sympy.Basic) -> sympy.Basic:
+        """Calculate the dimension of the slice given the length of the array."""
+        assert self.step.is_positive, "Only positive steps are supported."
+        start, stop, step = self.args
+        if start == SENTINEL_INDEX:
+            start = 0
+        if stop == SENTINEL_INDEX:
+            stop = length
+        return ceildiv(stop - start, step)
 
     @property
     def start(self):
@@ -310,9 +331,23 @@ class SympySlice(sympy.Function):
         return self.args[2]
 
 
+def sympy_slice(*args):
+    """Create a symbolic slice."""
+    if len(args) == 0:
+        return SympySlice(SENTINEL_INDEX, SENTINEL_INDEX, sympy.S.One)
+    elif len(args) == 1:
+        return SympySlice(SENTINEL_INDEX, args[0], sympy.S.One)
+    elif len(args) == 2:
+        return SympySlice(args[0], args[1], sympy.S.One)
+    elif len(args) == 3:
+        start, stop, step = args
+        return SympySlice(start, stop, step)
+    else:
+        raise ValueError(f"Invalid number of arguments for sympy_slice: {len(args)}")
+
+
 def broadcasat_shapes(shape1: sympy.Tuple, shape2: sympy.Tuple):
     """Broadcast two shapes together."""
-    # TODO: use symbolic computation
     shape1, shape2 = shape1.args, shape2.args
     len1, len2 = len(shape1), len(shape2)
     if len1 < len2:

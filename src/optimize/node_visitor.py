@@ -10,6 +10,7 @@ from optimize.abtract_tree import AbstractNode, Assignment, Declaration, ForLoop
 from optimize.constexpr import Constexpr
 from optimize.optimize_lang import Array
 from optimize.sympy_utils import (
+    SENTINEL_INDEX,
     TYPE_MAP,
     UNKNOWN_TYPES,
     SymbolicArray,
@@ -17,8 +18,7 @@ from optimize.sympy_utils import (
     SympyDtype,
     SympyIndexing,
     SympyShape,
-    SympySlice,
-    SympySliceSentinel,
+    sympy_slice,
 )
 
 
@@ -396,14 +396,10 @@ class NodeVisitor(ast.NodeVisitor):
         return tuple(args)
 
     def visit_Slice(self, node):
-        lower = (
-            self.visit(node.lower) if node.lower is not None else SympySliceSentinel()
-        )
-        upper = (
-            self.visit(node.upper) if node.upper is not None else SympySliceSentinel()
-        )
+        lower = self.visit(node.lower) if node.lower is not None else SENTINEL_INDEX
+        upper = self.visit(node.upper) if node.upper is not None else SENTINEL_INDEX
         step = self.visit(node.step) if node.step is not None else sympy.Number(1)
-        return SympySlice(lower, upper, step)
+        return sympy_slice(lower, upper, step)
 
     def dereference_name(self, name, absent=None) -> Any:
         error_if_absent = False

@@ -7,9 +7,7 @@ from optimize.sympy_utils import (
     SymbolicArray,
     SymbolicScalar,
     SympyIndexing,
-    SympyShape,
-    SympySlice,
-    SympySliceSentinel,
+    sympy_slice,
 )
 
 if TYPE_CHECKING:
@@ -84,7 +82,7 @@ def get_expr_mem_accesses(
 
     if isinstance(expr, SymbolicArray) and isinstance(expr.label, sympy.Symbol):
         decl_stmt = find_decl_stmt(loop_nest, expr.label.name)
-        index = sympy.Tuple(*[SympySlice() for _ in range(len(expr.shape.args))])
+        index = sympy.Tuple(*[sympy_slice() for _ in range(len(expr.shape.args))])
         return [
             MemAccess(
                 name=expr.label.name,

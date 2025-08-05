@@ -10,12 +10,16 @@ from optimize.dependence_checking import dependence_levels
 from optimize.flow_analysis import DefDict, flow_analysis
 from optimize.mem_access import MemAccess, find_decl_stmt, get_mem_accesses
 from optimize.sympy_utils import (
+    SENTINEL_INDEX,
     SymbolicArray,
     SymbolicScalar,
     SympyDtype,
     SympyIndexing,
     SympyShape,
+    SympySlice,
     ceildiv,
+    int64,
+    sympy_slice,
 )
 
 
@@ -336,7 +340,77 @@ class AnalyzedNode:
         # FIXME: copy to the new variable at the beginning of the iteration if necessary
 
         # Copy the original variable to the new variable at the end of the iteration
-        decl_loop.obj.statements.append(Assignment(var_symbol, new_var_symbol))
+        assign_target = SympyIndexing(
+            var_symbol,
+            sympy.Tuple(*[sympy_slice() for _ in var_symbol.shape]),
+        )
+        assign_value = SympyIndexing(
+            new_var_symbol,
+            sympy.Tuple(*[sympy_slice() for _ in new_var_symbol.shape]),
+        )
+        decl_loop.obj.statements.append(Assignment(assign_target, assign_value))
+
+        return analyze_tree(new_tree)
+
+    def expand_assignment(self, asgn_idx: int) -> "AnalyzedNode":
+        """Expands a vectorized assignment into a (nested) loop."""
+        analyzed_tree = copy.deepcopy(self)
+        new_tree = analyzed_tree.obj
+
+        stmt = analyzed_tree.find_stmt(("A", asgn_idx))
+        if stmt is None:
+            raise ValueError(
+                f"Invalid assignment index: {asgn_idx}\n" + self.numbered_repr()
+            )
+
+        assert isinstance(stmt.obj, Assignment)
+
+        if not isinstance(stmt.obj.target, SympyIndexing):
+            raise ValueError(
+                f"Assignment A{asgn_idx} target is not an array indexing:\n"
+                + self.numbered_repr()
+            )
+
+        # Find the loop that contains the assignment
+        loop = stmt.parent
+        assert isinstance(loop.obj, ForLoop)
+
+        # Create a new loop for each dimension of the array
+        shape = SympyShape(stmt.obj.target.array)
+        if len(shape.args) == 0:
+            raise ValueError(
+                f"Assignment A{asgn_idx} target has no dimensions:\n"
+                + self.numbered_repr()
+            )
+
+        new_loop = None
+        child_loop = None
+        index_vars = []
+        for axis, dim in enumerate(shape.args):
+            index_var = SymbolicScalar(
+                f"{stmt.obj.target.array.label.name}_i{axis}", int64
+            )
+            index_vars.append(index_var)
+
+            # Create the new loop
+            cur_loop = ForLoop(
+                index_var=index_var,
+                index_begin=sympy.Integer(0),
+                index_end=dim,
+                index_step=sympy.Integer(1),
+                declarations={},
+                statements=[],
+                max_steps=dim,
+            )
+
+            if new_loop is None:
+                new_loop = child_loop = cur_loop
+            else:
+                child_loop.statements.append(cur_loop)
+                child_loop = cur_loop
+
+        # Replace the assignment with the new loop
+        loop.obj.statements[loop.obj.statements.index(stmt.obj)] = new_loop
 
         return analyze_tree(new_tree)
 

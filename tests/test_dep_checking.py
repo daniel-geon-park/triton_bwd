@@ -366,6 +366,7 @@ def test_optimize_attention():
 
     # 8 CACHE ARRAY
     tree = tree.cache_array("o", None)
+    tree = tree.expand_assignment(9)
 
     print("End result:")
     print(tree.numbered_repr())
