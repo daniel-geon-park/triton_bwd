@@ -16,8 +16,8 @@ from optimize.sympy_utils import (
     SymbolicArray,
     SymbolicScalar,
     SympyDtype,
-    SympyIndexing,
     SympyShape,
+    indexing,
     sympy_slice,
 )
 
@@ -378,7 +378,7 @@ class NodeVisitor(ast.NodeVisitor):
     def visit_Subscript(self, node):
         value = self.visit(node.value)
         index = self.visit(node.slice)
-        return SympyIndexing(value, index)
+        return indexing(value, index)
 
     def visit_Starred(self, node):
         raise NotImplementedError

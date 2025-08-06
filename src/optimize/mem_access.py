@@ -100,9 +100,6 @@ def get_expr_mem_accesses(
         array_name = array.label.name
         decl_stmt = find_decl_stmt(loop_nest, array_name)
 
-        if not isinstance(index, sympy.Tuple):
-            index = sympy.Tuple(index)
-
         return [
             MemAccess(
                 name=array_name,

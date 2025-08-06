@@ -1,7 +1,7 @@
 import math
 
+from optimize import Array, ArraySpec, InArray, InOutArray, OutArray, optimize
 from optimize.code_gen import generate_code
-from optimize.optimize import Array, ArraySpec, InArray, InOutArray, OutArray, optimize
 
 
 @optimize(
@@ -367,6 +367,9 @@ def test_optimize_attention():
     # 8 CACHE ARRAY
     tree = tree.cache_array("o", None)
     tree = tree.expand_assignment(9)
+    tree = tree.tile_loop(10, 32)
+    tree = tree.rename_loop_var(10, "iq1")
+    tree = tree.fuse_loop(1, 10)
 
     print("End result:")
     print(tree.numbered_repr())

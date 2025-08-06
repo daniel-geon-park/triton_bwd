@@ -153,7 +153,7 @@ class SymbolicArray(sympy.Expr):
             symbol,
             dtype,
             sympy.sympify(shape),
-            is_placeholder,
+            sympy.sympify(is_placeholder),
         )
         cls._set_assumptions(obj, symbol._assumptions)
         return obj
@@ -183,17 +183,34 @@ class SympyIndexing(sympy.Function):
 
     @classmethod
     def eval(cls, array, index):
-        pass
+        assert isinstance(index, sympy.Tuple) or isinstance(index, sympy.Wild)
+        if isinstance(array, SympyIndexing):
+            # Flatten nested indexing
+            # FIXME: rewrite this to handle partial index and new axis
+            orig_shape = SympyShape(array.array)
+            target_indices = []
+            loop_level = 0
+            for axis, dim in enumerate(orig_shape.args):
+                if axis < len(array.index.args):
+                    idx = array.index.args[axis]
+                else:
+                    idx = sympy_slice()
+                if isinstance(idx, SympySlice):
+                    target_indices.append(idx.index(index.args[loop_level]))
+                    loop_level += 1
+                # TODO: handle new axis
+                else:
+                    assert idx.is_integer
+                    target_indices.append(idx)
+            return SympyIndexing(array.array, sympy.Tuple(*target_indices))
 
     def _sympystr(self, printer):
         array, index = self.args
-        if isinstance(index, sympy.Tuple):
-            if len(index.args) == 0:
-                index_str = "()"
-            else:
-                index_str = ", ".join(printer.doprint(i) for i in index)
+        assert isinstance(index, sympy.Tuple)
+        if len(index.args) == 0:
+            index_str = "()"
         else:
-            index_str = printer.doprint(index)
+            index_str = ", ".join(printer.doprint(i) for i in index)
         return printer.doprint(array) + "[" + index_str + "]"
 
     @property
@@ -203,6 +220,12 @@ class SympyIndexing(sympy.Function):
     @property
     def index(self):
         return self.args[1]
+
+
+def indexing(array: sympy.Basic, index: sympy.Basic) -> SympyIndexing:
+    if not isinstance(index, sympy.Tuple):
+        index = sympy.Tuple(index)
+    return SympyIndexing(array, index)
 
 
 class SympyDtype(sympy.Function):
@@ -276,7 +299,9 @@ class SympyShape(sympy.Function):
                 # TODO: handle new axis
                 else:
                     # Assume single index access
+                    assert idx.is_integer
                     axis += 1
+            result_shape += array_shape.args[axis:]  # Remaining dimensions
             result = sympy.Tuple(*result_shape)
         else:
             # TODO: implement other array operations
@@ -317,6 +342,12 @@ class SympySlice(sympy.Function):
         if stop == SENTINEL_INDEX:
             stop = length
         return ceildiv(stop - start, step)
+
+    def index(self, i: sympy.Basic) -> sympy.Basic:
+        start, stop, step = self.args
+        if start == SENTINEL_INDEX:
+            start = 0
+        return start + i * step
 
     @property
     def start(self):

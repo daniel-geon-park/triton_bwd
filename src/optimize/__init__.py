@@ -7,6 +7,7 @@ from optimize.abtract_tree import *
 from optimize.analyzed_tree import AnalyzedNode, analyze_tree
 from optimize.node_visitor import NodeVisitor
 from optimize.optimize_lang import *
+from optimize.sympy_utils import float32, int64
 
 
 class OptimizableFunction:
@@ -76,13 +77,25 @@ class OptimizableFunction:
             source = inspect.getsource(self.func)
             tree = ast.parse(source)
 
+            symbols = {}
+            signature = inspect.signature(self.func)
+            for name, param in signature.parameters.items():
+                if param.annotation is int:
+                    symbols[name] = SymbolicScalar(name, int64)
+                elif param.annotation is float:
+                    symbols[name] = SymbolicScalar(name, float32)
+
+            for name, param in signature.parameters.items():
+                if param.annotation in [InArray, OutArray, InOutArray]:
+                    spec = self.arg_specs[name]
+                    shape = tuple(symbols[dim] for dim in spec.dims)
+                    symbols[name] = SymbolicArray(name, spec.dtype, shape)
+
             # Parse the tree to create an abstract syntax tree
-            # FIXME: spec.symbol() should return a SymbolicArray with SymbolicScalar shape
-            args = {name: spec.symbol() for name, spec in self.arg_specs.items()}
             visitor = NodeVisitor(
                 call_stack=[self.func.__name__],
                 func_globals=self.func.__globals__,
-                args=args,
+                args=symbols,
             )
             self._abstract_tree: AbstractNode = visitor.visit(tree)
         return self._abstract_tree

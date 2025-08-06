@@ -18,6 +18,7 @@ from optimize.sympy_utils import (
     SympyShape,
     SympySlice,
     ceildiv,
+    indexing,
     int64,
     sympy_slice,
 )
@@ -409,8 +410,116 @@ class AnalyzedNode:
                 child_loop.statements.append(cur_loop)
                 child_loop = cur_loop
 
+        assign_target = indexing(stmt.obj.target, sympy.Tuple(*index_vars))
+        assign_value = indexing(stmt.obj.value, sympy.Tuple(*index_vars))
+
+        child_loop.statements.append(Assignment(assign_target, assign_value))
+
         # Replace the assignment with the new loop
         loop.obj.statements[loop.obj.statements.index(stmt.obj)] = new_loop
+
+        return analyze_tree(new_tree)
+
+    def _detect_name_conflict(
+        self,
+        parent_loop: "AnalyzedNode",
+        old_decl: "AnalyzedNode",
+        old_symbol: Union[SymbolicScalar, SymbolicArray],
+        new_name: str,
+    ):
+        old_name = old_symbol.label.name
+        for stmt in parent_loop.descendants:
+            if stmt.kind == "D":
+                continue
+            if not any(len(expr.find(old_symbol)) > 0 for expr in stmt.obj.exprs):
+                continue
+            loop_nest = stmt.loop_nest()
+            if find_decl_stmt(loop_nest, old_name) != old_decl:
+                continue
+            new_decl = find_decl_stmt(loop_nest, new_name)
+            if new_decl is None:
+                continue
+            if new_decl.level > old_decl.level:
+                raise ValueError(
+                    f"Variable `{new_name}` already exists in the loop's statements:\n"
+                    + self.numbered_repr()
+                )
+
+    def rename_declaration(self, decl_idx: int, new_name: str) -> "AnalyzedNode":
+        """Renames a variable declaration."""
+        analyzed_tree = copy.deepcopy(self)
+        new_tree = analyzed_tree.obj
+
+        decl = analyzed_tree.find_stmt(("D", decl_idx))
+        if decl is None:
+            raise ValueError(
+                f"Invalid declaration index: {decl_idx}\n" + self.numbered_repr()
+            )
+
+        assert isinstance(decl.obj, Declaration)
+        old_name = decl.obj.name
+        old_symbol = decl.obj.symbol
+
+        parent_loop = decl.parent
+        assert isinstance(parent_loop.obj, ForLoop)
+
+        if new_name in parent_loop.obj.declarations:
+            raise ValueError(
+                f"Variable `{new_name}` already exists in the loop's declarations:\n"
+                + self.numbered_repr()
+            )
+
+        analyzed_tree._detect_name_conflict(parent_loop, decl, old_symbol, new_name)
+
+        assert isinstance(old_symbol, (SymbolicScalar, SymbolicArray))
+        if isinstance(old_symbol, SymbolicScalar):
+            new_symbol = SymbolicScalar(new_name, old_symbol.dtype)
+        elif isinstance(old_symbol, SymbolicArray):
+            new_symbol = SymbolicArray(new_name, old_symbol.dtype, old_symbol.shape)
+
+        # Rename references in the loop's statements
+        for stmt in parent_loop.descendants:
+            cur_decl = find_decl_stmt(stmt.loop_nest(), old_name)
+            if cur_decl != decl:
+                continue  # Skip variables shadowing the one we are renaming
+            stmt.obj.exprs = [
+                expr.replace(old_symbol, new_symbol) for expr in stmt.obj.exprs
+            ]
+
+        # Rename the declaration
+        del parent_loop.obj.declarations[old_name]
+        parent_loop.obj.declarations[new_name] = Declaration(new_name, new_symbol)
+
+        return analyze_tree(new_tree)
+
+    def rename_loop_var(self, loop_idx: int, new_name: str) -> "AnalyzedNode":
+        """Renames the index variable of a loop."""
+        analyzed_tree = copy.deepcopy(self)
+        new_tree = analyzed_tree.obj
+
+        loop = analyzed_tree.find_stmt(("L", loop_idx))
+        if loop is None:
+            raise ValueError(f"Invalid loop index: {loop_idx}\n" + self.numbered_repr())
+
+        assert isinstance(loop.obj, ForLoop)
+        old_symbol = loop.obj.index_var
+
+        analyzed_tree._detect_name_conflict(loop, loop, old_symbol, new_name)
+
+        old_name = old_symbol.label.name
+        new_symbol = SymbolicScalar(new_name, old_symbol.dtype)
+
+        # Rename references in the loop's statements
+        for stmt in loop.descendants:
+            cur_decl = find_decl_stmt(stmt.loop_nest(), old_name)
+            if cur_decl != loop:
+                continue  # Skip variables shadowing the one we are renaming
+            stmt.obj.exprs = [
+                expr.replace(old_symbol, new_symbol) for expr in stmt.obj.exprs
+            ]
+
+        # Rename the index variable
+        loop.obj.index_var = new_symbol
 
         return analyze_tree(new_tree)
 
@@ -645,8 +754,6 @@ class AnalyzedNode:
         pattern = SympyIndexing(array_symbol, sympy.Wild("index"))
 
         def update_index(index):
-            if not isinstance(index, sympy.Tuple):
-                index = sympy.Tuple(index)
             new_index = index.args[:index_dim] + index.args[index_dim + 1 :]
             new_index = sympy.Tuple(*new_index)
             return SympyIndexing(array_symbol, new_index)
@@ -718,8 +825,6 @@ class AnalyzedNode:
         pattern = SympyIndexing(array_symbol, sympy.Wild("index"))
 
         def update_index(index):
-            if not isinstance(index, sympy.Tuple):
-                index = sympy.Tuple(index)
             new_index = (
                 *index.args[:new_axis],
                 outer_idx,
