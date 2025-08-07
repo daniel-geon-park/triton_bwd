@@ -347,29 +347,31 @@ def test_optimize_attention():
     tree = tree.move_array_inside(0, 1)
     tree = tree.move_array_inside(0, 1)
 
-    # 3 TILE LOOP iq
+    # 3 MERGE LOOPS
+    tree = tree.fuse_loop(7, 8)
+
+    # 4 LOCALIZE ARRAY
+    tree = tree.move_array_inside(3, 7)
+
+    # 5 CONSTANT FOLDING
+    tree = tree.constant_fold(8, "probs", 4, 7)
+
+    # 6 CACHE ARRAY
+    tree = tree.cache_array("o", None)
+    tree = tree.expand_assignment(9)
+    tree = tree.rename_loop_var(9, "iq")
+    tree = tree.rename_loop_var(10, "d")
+    tree = tree.fuse_loop(1, 9)
+    tree = tree.move_array_inside(0, 1)
+
+    # 7 TILE LOOP iq
     tree = tree.tile_loop(1, 32)
 
     # 4 MOVE ARRAY OUTSIDE
     tree = tree.move_array_outside(0, 0)
     tree = tree.move_array_outside(1, 0)
     tree = tree.move_array_outside(2, 0)
-
-    # 5 MERGE LOOPS
-    tree = tree.fuse_loop(8, 9)
-
-    # 6 LOCALIZE ARRAY
-    tree = tree.move_array_inside(3, 8)
-
-    # 7 CONSTANT FOLDING
-    tree = tree.constant_fold(8, "probs", 4, 7)
-
-    # 8 CACHE ARRAY
-    tree = tree.cache_array("o", None)
-    tree = tree.expand_assignment(9)
-    tree = tree.tile_loop(10, 32)
-    tree = tree.rename_loop_var(10, "iq1")
-    tree = tree.fuse_loop(1, 10)
+    tree = tree.move_array_outside(3, 0)
 
     print("End result:")
     print(tree.numbered_repr())

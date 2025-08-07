@@ -807,9 +807,9 @@ class AnalyzedNode:
                 + self.numbered_repr()
             )
 
-        outer_begin = outer_loop.obj.index_begin
-        outer_step = outer_loop.obj.index_step
-        outer_idx = (outer_loop.obj.index_var - outer_begin) // outer_step
+        inner_begin = inner_loop.obj.index_begin
+        inner_step = inner_loop.obj.index_step
+        inner_idx = (inner_loop.obj.index_var - inner_begin) // inner_step
 
         new_shape = (
             old_shape[:new_axis] + (inner_loop.obj.max_steps,) + old_shape[new_axis:]
@@ -827,7 +827,7 @@ class AnalyzedNode:
         def update_index(index):
             new_index = (
                 *index.args[:new_axis],
-                outer_idx,
+                inner_idx,
                 *index.args[new_axis:],
             )
             new_index = sympy.Tuple(*new_index)
