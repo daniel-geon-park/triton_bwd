@@ -523,6 +523,29 @@ class AnalyzedNode:
 
         return analyze_tree(new_tree)
 
+    def move_statement(
+        self,
+        stmt_idx: Tuple[str, int],
+        insert_after: Optional[Tuple[str, int]],
+    ) -> "AnalyzedNode":
+        """Moves a statement to a new position in the same loop.
+        If `insert_after` is None, the statement is moved to the start of the loop."""
+        analyzed_tree = copy.deepcopy(self)
+        new_tree = analyzed_tree.obj
+
+        stmt = analyzed_tree.find_stmt(stmt_idx)
+        if stmt is None:
+            raise ValueError(
+                f"Invalid statement index: {stmt_idx}\n" + self.numbered_repr()
+            )
+
+        if stmt.kind == "D":
+            raise ValueError(
+                f"Cannot move declaration {stmt_idx}:\n" + self.numbered_repr()
+            )
+
+        return analyze_tree(new_tree)
+
     def fuse_loop(self, loop_idx_a: int, loop_idx_b: int) -> "AnalyzedNode":
         """Fuses two consecutive loops."""
         analyzed_tree = copy.deepcopy(self)  # Ensure we don't modify the original tree
