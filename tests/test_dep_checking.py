@@ -364,18 +364,20 @@ def test_optimize_attention():
     tree = tree.fuse_loop(1, 9)
     tree = tree.move_array_inside(0, 1)
 
-    # 7 TILE LOOP iq
+    # 7 REORDER STATEMENTS
+    tree = tree.reorder_statement(("L", 2), ("L", 6))
+    tree = tree.reorder_statement(("A", 0), ("L", 4))
+
+    # TODO: multiply o_local
+
+    # 8 TILE LOOP iq
     tree = tree.tile_loop(1, 32)
 
-    # 8 MOVE ARRAY OUTSIDE
-    tree = tree.move_array_outside(0, 0)
-    tree = tree.move_array_outside(1, 0)
-    tree = tree.move_array_outside(2, 0)
-    tree = tree.move_array_outside(3, 0)
-
-    # 9 REORDER STATEMENTS
-    tree = tree.reorder_statement(("L", 3), ("L", 7))
-    tree = tree.reorder_statement(("A", 0), ("L", 5))
+    # 9 MOVE ARRAY OUTSIDE
+    # tree = tree.move_array_outside(0, 0)
+    # tree = tree.move_array_outside(1, 0)
+    # tree = tree.move_array_outside(2, 0)
+    # tree = tree.move_array_outside(3, 0)
 
     print("End result:")
     print(tree.numbered_repr())
