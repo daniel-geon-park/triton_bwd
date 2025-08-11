@@ -170,12 +170,13 @@ class AnalyzedNode:
         self,
         a: List[Union[AbstractNode, Tuple[str, int]]],
         b: List[Union[AbstractNode, Tuple[str, int]]],
+        on_vars: Optional[Set[str]] = None,
     ) -> Set[Tuple[str, int, str]]:
         """Finds dependencies between two blocks of statements."""
         dependencies = set()
         for stmt_a in a:
             for stmt_b in b:
-                deps = self.find_stmt_dependence(stmt_a, stmt_b)
+                deps = self.find_stmt_dependence(stmt_a, stmt_b, on_vars)
                 dependencies.update(deps)
         return dependencies
 
@@ -523,7 +524,7 @@ class AnalyzedNode:
 
         return analyze_tree(new_tree)
 
-    def move_statement(
+    def reorder_statement(
         self,
         stmt_idx: Tuple[str, int],
         insert_after: Optional[Tuple[str, int]],
@@ -543,6 +544,72 @@ class AnalyzedNode:
             raise ValueError(
                 f"Cannot move declaration {stmt_idx}:\n" + self.numbered_repr()
             )
+
+        parent_loop = stmt.parent
+        assert isinstance(parent_loop.obj, ForLoop)
+
+        orig_idx = parent_loop.obj.statements.index(stmt.obj)
+
+        insert_point, insert_idx = None, 0
+        if insert_after is not None:
+            insert_point = analyzed_tree.find_stmt(insert_after)
+
+            if insert_point is None:
+                raise ValueError(
+                    f"Invalid insert point {insert_after}:\n" + self.numbered_repr()
+                )
+
+            if stmt.parent != insert_point.parent:
+                raise ValueError(
+                    f"Cannot move statement {stmt_idx} to a different loop:\n"
+                    + self.numbered_repr()
+                )
+
+            insert_idx = parent_loop.obj.statements.index(insert_point.obj) + 1
+
+        if orig_idx == insert_idx:
+            raise ValueError(
+                f"Statement {stmt_idx} is already at the desired position:\n"
+                + self.numbered_repr()
+            )
+
+        if orig_idx < insert_idx:  # Moving it down
+            between_stmts = parent_loop.obj.statements[orig_idx + 1 : insert_idx]
+
+            deps = analyzed_tree.find_stmt_block_dependence([stmt.obj], between_stmts)
+
+            for dep_kind, level, var_name in deps:
+                if level == stmt.level:
+                    raise ValueError(
+                        f"Moving statement {stmt_idx} down introduces "
+                        f"a dependence at the same level {level} for variable `{var_name}`:\n"
+                        + self.numbered_repr()
+                    )
+
+            # Remove the statement from its original position
+            parent_loop.obj.statements.remove(stmt.obj)
+
+            # Insert it at the new position
+            parent_loop.obj.statements.insert(insert_idx - 1, stmt.obj)
+
+        else:  # Moving it up
+            between_stmts = parent_loop.obj.statements[insert_idx:orig_idx]
+
+            deps = analyzed_tree.find_stmt_block_dependence(between_stmts, [stmt.obj])
+
+            for dep_kind, level, var_name in deps:
+                if level == stmt.level:
+                    raise ValueError(
+                        f"Moving statement {stmt_idx} down introduces "
+                        f"a dependence at the same level {level} for variable `{var_name}`:\n"
+                        + self.numbered_repr()
+                    )
+
+            # Remove the statement from its original position
+            parent_loop.obj.statements.remove(stmt.obj)
+
+            # Insert it at the new position
+            parent_loop.obj.statements.insert(insert_idx, stmt.obj)
 
         return analyze_tree(new_tree)
 
