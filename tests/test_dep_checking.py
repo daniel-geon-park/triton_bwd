@@ -2,6 +2,7 @@ import math
 
 from optimize import Array, ArraySpec, InArray, InOutArray, OutArray, optimize
 from optimize.code_gen import generate_code
+from optimize.transform import *
 
 
 @optimize(
@@ -27,7 +28,7 @@ def matrix_multiply(
 
 def test_matmul():
     print(matrix_multiply.tree.numbered_repr())
-    result = matrix_multiply.tree.find_dependence(0, 0)
+    result = matrix_multiply.tree.assignment_dependence(0, 0)
     print(result)
     assert result == {("flow", 3, "c"), ("anti", 3, "c"), ("outp", 3, "c")}
 
@@ -62,11 +63,11 @@ def book_example(
 
 def test_book_example():
     print(book_example.tree.numbered_repr())
-    book_example.tree.find_dependence(1, 1)
+    book_example.tree.assignment_dependence(1, 1)
     dependencies = set()
     for i in range(6):
         for j in range(6):
-            deps = book_example.tree.find_dependence(i, j)
+            deps = book_example.tree.assignment_dependence(i, j)
             if deps:
                 print(f"Dependence from {i+1} to {j+1}: {deps}")
             for dep in deps:
@@ -156,14 +157,14 @@ def example3(
 
 def test_fuse_loop():
     print(example1.tree.numbered_repr())
-    print("Fuse result:", example1.tree.fuse_loop(3, 4), sep="\n")
+    print("Fuse result:", fuse_loop(example1.tree, 3, 4), sep="\n")
 
     print(example2.tree.numbered_repr())
-    print("Fuse result:", example2.tree.fuse_loop(3, 4), sep="\n")
+    print("Fuse result:", fuse_loop(example2.tree, 3, 4), sep="\n")
 
     print(example3.tree.numbered_repr())
     try:
-        example3.tree.fuse_loop(3, 4)
+        fuse_loop(example3.tree, 3, 4)
     except ValueError as e:
         print(f"Expected error: {e}")
     else:
@@ -210,7 +211,7 @@ def example4(
 
 def test_split_loop():
     print(example4.tree.numbered_repr())
-    tree = example4.tree.split_loop(("A", 0))
+    tree = split_loop(example4.tree, ("A", 0))
     print("Split result:", tree.numbered_repr(), sep="\n")
 
 
@@ -255,7 +256,7 @@ def example5(
 def test_split_loop_2():
     print(example5.tree.numbered_repr())
     try:
-        tree = example5.tree.split_loop(("A", 0))
+        tree = split_loop(example5.tree, ("A", 0))
     except ValueError as e:
         print(f"Expected error: {e}")
     else:
@@ -280,7 +281,7 @@ def example6(
 
 def test_example6():
     print(example6.tree.numbered_repr())
-    deps = example6.tree.find_dependence(0, 0)
+    deps = example6.tree.assignment_dependence(0, 0)
     assert deps == set()
 
 
@@ -335,49 +336,49 @@ def test_optimize_attention():
     print(tree.numbered_repr())
 
     # 1 MERGE LOOPS
-    tree = tree.fuse_loop(1, 3)
-    tree = tree.fuse_loop(1, 5)
-    tree = tree.fuse_loop(1, 6)
-    tree = tree.fuse_loop(1, 7)
-    tree = tree.fuse_loop(1, 8)
+    tree = fuse_loop(tree, 1, 3)
+    tree = fuse_loop(tree, 1, 5)
+    tree = fuse_loop(tree, 1, 6)
+    tree = fuse_loop(tree, 1, 7)
+    tree = fuse_loop(tree, 1, 8)
 
     # 2 LOCALIZE ARRAYS
-    tree = tree.move_array_inside(0, 1)
-    tree = tree.move_array_inside(0, 1)
-    tree = tree.move_array_inside(0, 1)
-    tree = tree.move_array_inside(0, 1)
+    tree = move_array_inside(tree, 0, 1)
+    tree = move_array_inside(tree, 0, 1)
+    tree = move_array_inside(tree, 0, 1)
+    tree = move_array_inside(tree, 0, 1)
 
     # 3 MERGE LOOPS
-    tree = tree.fuse_loop(7, 8)
+    tree = fuse_loop(tree, 7, 8)
 
     # 4 LOCALIZE ARRAY
-    tree = tree.move_array_inside(3, 7)
+    tree = move_array_inside(tree, 3, 7)
 
     # 5 CONSTANT FOLDING
-    tree = tree.constant_fold(8, "probs", 4, 7)
+    tree = constant_fold(tree, 8, "probs", 4, 7)
 
     # 6 CACHE ARRAY
-    tree = tree.cache_array("o", None)
-    tree = tree.expand_assignment(9)
-    tree = tree.rename_loop_var(9, "iq")
-    tree = tree.rename_loop_var(10, "d")
-    tree = tree.fuse_loop(1, 9)
-    tree = tree.move_array_inside(0, 1)
+    tree = cache_array(tree, "o", None)
+    tree = expand_assignment(tree, 9)
+    tree = rename_loop_var(tree, 9, "iq")
+    tree = rename_loop_var(tree, 10, "d")
+    tree = fuse_loop(tree, 1, 9)
+    tree = move_array_inside(tree, 0, 1)
 
     # 7 REORDER STATEMENTS
-    tree = tree.reorder_statement(("L", 2), ("L", 6))
-    tree = tree.reorder_statement(("A", 0), ("L", 4))
+    tree = reorder_statement(tree, ("L", 2), ("L", 6))
+    tree = reorder_statement(tree, ("A", 0), ("L", 4))
 
     # TODO: multiply o_local
 
     # 8 TILE LOOP iq
-    tree = tree.tile_loop(1, 32)
+    tree = tile_loop(tree, 1, 32)
 
     # 9 MOVE ARRAY OUTSIDE
-    # tree = tree.move_array_outside(0, 0)
-    # tree = tree.move_array_outside(1, 0)
-    # tree = tree.move_array_outside(2, 0)
-    # tree = tree.move_array_outside(3, 0)
+    # tree = move_array_outside(tree, 0, 0)
+    # tree = move_array_outside(tree, 1, 0)
+    # tree = move_array_outside(tree, 2, 0)
+    # tree = move_array_outside(tree, 3, 0)
 
     print("End result:")
     print(tree.numbered_repr())
